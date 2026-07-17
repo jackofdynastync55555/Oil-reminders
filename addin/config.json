@@ -1,0 +1,15 @@
+{
+  "name": "Oil Change Reminders",
+  "supportEmail": "support@dynastycommunications.com",
+  "version": "1.0.0",
+  "items": [
+    {
+      "url": "https://YOUR-GITHUB-USERNAME.github.io/YOUR-REPO-NAME/addin/oil-reminders.html",
+      "path": "ActivityLink/",
+      "menuName": {
+        "en": "Oil Change Reminders"
+      }
+    }
+  ],
+  "isSigned": false
+}

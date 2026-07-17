@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Oil Change Reminders</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --card: #ffffff;
+    --ink: #1c2733;
+    --ink-soft: #5b6b7c;
+    --line: #e2e7ed;
+    --blue: #0a6ebd;
+    --blue-soft: #e3f0fa;
+    --green: #1e8e5a;
+    --amber: #c47f17;
+    --red: #c23934;
+    --track: #edf1f5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 14px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  .header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0; }
+  .sub { color: var(--ink-soft); margin: 0 0 20px; }
+  .refresh {
+    background: none; border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 14px; font-size: 13px; color: var(--blue); cursor: pointer;
+  }
+  .refresh:hover { background: var(--blue-soft); }
+
+  .vehicle {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+  .row1 { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .vname { font-weight: 600; font-size: 15px; }
+  .odo { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+  .status { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .status.ok       { background: #e6f4ec; color: var(--green); }
+  .status.soon     { background: #fbf1de; color: var(--amber); }
+  .status.overdue  { background: #fbe7e6; color: var(--red); }
+  .status.disabled { background: var(--track); color: var(--ink-soft); }
+
+  /* the "road" — distance traveled toward the next reminder */
+  .road { position: relative; height: 10px; background: var(--track); border-radius: 5px; margin: 12px 0 6px; overflow: hidden; }
+  .road-fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--blue); transition: width .4s ease; }
+  .road-fill.soon { background: var(--amber); }
+  .road-fill.overdue { background: var(--red); }
+  .road-ticks { position: absolute; inset: 0; display: flex; }
+  .road-ticks span { flex: 1; border-right: 2px solid rgba(255,255,255,.7); }
+  .road-ticks span:last-child { border-right: none; }
+
+  .row2 { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--ink-soft); font-size: 13px; }
+  .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .controls label { display: flex; align-items: center; gap: 6px; }
+  .controls input[type="number"] {
+    width: 84px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+    font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .btn {
+    background: var(--blue); color: #fff; border: none; border-radius: 6px;
+    padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn.ghost { background: none; color: var(--blue); border: 1px solid var(--line); }
+  .btn.ghost:hover { background: var(--blue-soft); }
+
+  .empty, .loading { text-align: center; color: var(--ink-soft); padding: 48px 0; }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: #fff; padding: 9px 18px; border-radius: 6px;
+    font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>Oil Change Reminders</h1>
+    <button class="refresh" id="refreshBtn">Refresh</button>
+  </div>
+  <p class="sub">Automatic distance-based reminders. Counters reset on their own — no work orders to complete.</p>
+  <div id="list"><div class="loading">Loading vehicles…</div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+// MUST match the ADD_IN_ID in scripts/check-oil-reminders.js
+// Generate at: https://geotab.github.io/sdk/software/guides/addin-storage/
+var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
+var DEFAULT_INTERVAL_MILES = 10000;
+var UNITS = "mi";                       // "mi" or "km" — match the script
+var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
+
+geotab.addin.oilChangeReminders = function () {
+  var api;
+  var listEl, toastEl;
+
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    setTimeout(function () { toastEl.classList.remove("show"); }, 2200);
+  }
+
+  function apiCall(method, params) {
+    return new Promise(function (resolve, reject) {
+      api.call(method, params, resolve, reject);
+    });
+  }
+
+  function getOdometer(deviceId) {
+    var now = new Date().toISOString();
+    return apiCall("Get", {
+      typeName: "StatusData",
+      search: {
+        deviceSearch: { id: deviceId },
+        diagnosticSearch: { id: "DiagnosticOdometerAdjustmentId" },
+        fromDate: now,
+        toDate: now
+      }
+    }).then(function (data) {
+      return data && data.length && data[0].data != null ? data[0].data : null;
+    });
+  }
+
+  function load() {
+    listEl.innerHTML = '<div class="loading">Loading vehicles…</div>';
+
+    Promise.all([
+      apiCall("Get", { typeName: "Device" }),
+      apiCall("Get", { typeName: "AddInData", search: { addInId: ADD_IN_ID } })
+    ]).then(function (results) {
+      var devices = results[0].filter(function (d) {
+        return !d.activeTo || new Date(d.activeTo) > new Date();
+      });
+      var stateByDevice = {};
+      results[1].forEach(function (rec) {
+        var det = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
+        if (det && det.deviceId) stateByDevice[det.deviceId] = { id: rec.id, details: det };
+      });
+
+      var odoPromises = devices.map(function (d) { return getOdometer(d.id); });
+      Promise.all(odoPromises).then(function (odos) {
+        render(devices, odos, stateByDevice);
+      });
+    }).catch(function (err) {
+      listEl.innerHTML = '<div class="empty">Could not load data: ' +
+        (err && err.message ? err.message : err) + "</div>";
+    });
+  }
+
+  function render(devices, odos, stateByDevice) {
+    listEl.innerHTML = "";
+    var shown = 0;
+
+    devices.forEach(function (device, i) {
+      var odoMeters = odos[i];
+      if (odoMeters == null) return; // no odometer data (e.g., asset trackers)
+      shown++;
+
+      var rec = stateByDevice[device.id] || null;
+      var det = rec ? rec.details : {
+        deviceId: device.id,
+        deviceName: device.name,
+        lastNotifiedMeters: odoMeters,
+        intervalMiles: DEFAULT_INTERVAL_MILES,
+        enabled: true,
+        lastNotifiedDate: null
+      };
+
+      var interval = det.intervalMiles || DEFAULT_INTERVAL_MILES;
+      var sinceUnits = (odoMeters - det.lastNotifiedMeters) / METERS_PER_UNIT;
+      var pct = Math.max(0, Math.min(100, (sinceUnits / interval) * 100));
+      var remaining = interval - sinceUnits;
+
+      var statusClass, statusText, fillClass = "";
+      if (det.enabled === false) {
+        statusClass = "disabled"; statusText = "Reminders off";
+      } else if (remaining <= 0) {
+        statusClass = "overdue"; fillClass = "overdue";
+        statusText = "Due — reminder pending";
+      } else if (pct >= 85) {
+        statusClass = "soon"; fillClass = "soon";
+        statusText = Math.round(remaining).toLocaleString() + " " + UNITS + " to go";
+      } else {
+        statusClass = "ok";
+        statusText = Math.round(remaining).toLocaleString() + " " + UNITS + " to go";
+      }
+
+      var card = document.createElement("div");
+      card.className = "vehicle";
+      card.innerHTML =
+        '<div class="row1">' +
+          '<span class="vname"></span>' +
+          '<span class="odo">' + Math.round(odoMeters / METERS_PER_UNIT).toLocaleString() + " " + UNITS + '</span>' +
+          '<span class="status ' + statusClass + '">' + statusText + '</span>' +
+        '</div>' +
+        '<div class="road">' +
+          '<div class="road-fill ' + fillClass + '" style="width:' + pct + '%"></div>' +
+          '<div class="road-ticks"><span></span><span></span><span></span><span></span></div>' +
+        '</div>' +
+        '<div class="row2">' +
+          '<span>' + Math.round(sinceUnits).toLocaleString() + " " + UNITS +
+            " since last reminder" +
+            (det.lastNotifiedDate ? " (" + new Date(det.lastNotifiedDate).toLocaleDateString() + ")" : "") +
+          '</span>' +
+          '<span class="controls">' +
+            '<label>Every <input type="number" min="500" step="500" value="' + interval + '"> ' + UNITS + '</label>' +
+            '<label><input type="checkbox" ' + (det.enabled !== false ? "checked" : "") + '> On</label>' +
+            '<button class="btn ghost">Mark serviced now</button>' +
+            '<button class="btn">Save</button>' +
+          '</span>' +
+        '</div>';
+
+      card.querySelector(".vname").textContent = device.name;
+
+      var intervalInput = card.querySelector('input[type="number"]');
+      var enabledInput  = card.querySelector('input[type="checkbox"]');
+      var resetBtn      = card.querySelector(".btn.ghost");
+      var saveBtn       = card.querySelector(".btn:not(.ghost)");
+
+      function persist(newDetails) {
+        var entity = {
+          addInId: ADD_IN_ID,
+          groups: [{ id: "GroupCompanyId" }],
+          details: newDetails
+        };
+        var method = rec && rec.id ? "Set" : "Add";
+        if (rec && rec.id) entity.id = rec.id;
+        return apiCall(method, { typeName: "AddInData", entity: entity })
+          .then(function (newId) {
+            if (!rec) rec = { id: newId, details: newDetails };
+            else rec.details = newDetails;
+            stateByDevice[device.id] = rec;
+          });
+      }
+
+      saveBtn.addEventListener("click", function () {
+        det.intervalMiles = Number(intervalInput.value) || DEFAULT_INTERVAL_MILES;
+        det.enabled = enabledInput.checked;
+        det.deviceName = device.name;
+        persist(det).then(function () { toast("Saved " + device.name); load(); });
+      });
+
+      resetBtn.addEventListener("click", function () {
+        det.lastNotifiedMeters = odoMeters;
+        det.lastNotifiedDate = new Date().toISOString();
+        det.deviceName = device.name;
+        persist(det).then(function () { toast(device.name + " counter reset"); load(); });
+      });
+
+      listEl.appendChild(card);
+    });
+
+    if (shown === 0) {
+      listEl.innerHTML = '<div class="empty">No vehicles with odometer data found.</div>';
+    }
+  }
+
+  return {
+    initialize: function (freshApi, state, callback) {
+      api = freshApi;
+      listEl = document.getElementById("list");
+      toastEl = document.getElementById("toast");
+      document.getElementById("refreshBtn").addEventListener("click", load);
+      callback();
+    },
+    focus: function (freshApi) {
+      api = freshApi;
+      load();
+    },
+    blur: function () {}
+  };
+};
+</script>
+</body>
+</html>
