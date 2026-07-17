@@ -1,0 +1,33 @@
+name: Oil Change Reminders
+
+on:
+  schedule:
+    # 11:00 UTC = 6:00/7:00 AM Eastern, every day
+    - cron: "0 11 * * *"
+  workflow_dispatch: {} # lets you run it manually from the Actions tab for testing
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install nodemailer
+
+      - name: Run reminder check
+        env:
+          GEOTAB_DATABASE: ${{ secrets.GEOTAB_DATABASE }}
+          GEOTAB_USER: ${{ secrets.GEOTAB_USER }}
+          GEOTAB_PASSWORD: ${{ secrets.GEOTAB_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: node scripts/check-oil-reminders.js
