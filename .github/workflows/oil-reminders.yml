@@ -21,13 +21,31 @@ jobs:
 
       - name: Run reminder check
         env:
-          GEOTAB_DATABASE: ${{ secrets.GEOTAB_DATABASE }}
-          GEOTAB_USER: ${{ secrets.GEOTAB_USER }}
-          GEOTAB_PASSWORD: ${{ secrets.GEOTAB_PASSWORD }}
+          # Shared email settings
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+
+          # Database 1
+          DB1_DATABASE: ${{ secrets.DB1_DATABASE }}
+          DB1_USER: ${{ secrets.DB1_USER }}
+          DB1_PASSWORD: ${{ secrets.DB1_PASSWORD }}
+          DB1_EMAILTO: ${{ secrets.DB1_EMAILTO }}
+          DB1_LABEL: ${{ secrets.DB1_LABEL }}
+
+          # Database 2
+          DB2_DATABASE: ${{ secrets.DB2_DATABASE }}
+          DB2_USER: ${{ secrets.DB2_USER }}
+          DB2_PASSWORD: ${{ secrets.DB2_PASSWORD }}
+          DB2_EMAILTO: ${{ secrets.DB2_EMAILTO }}
+          DB2_LABEL: ${{ secrets.DB2_LABEL }}
+
+          # Database 3 (add secrets when you onboard another customer)
+          DB3_DATABASE: ${{ secrets.DB3_DATABASE }}
+          DB3_USER: ${{ secrets.DB3_USER }}
+          DB3_PASSWORD: ${{ secrets.DB3_PASSWORD }}
+          DB3_EMAILTO: ${{ secrets.DB3_EMAILTO }}
+          DB3_LABEL: ${{ secrets.DB3_LABEL }}
         run: node scripts/check-oil-reminders.js
