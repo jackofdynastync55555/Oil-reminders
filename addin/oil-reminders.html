@@ -2,125 +2,178 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Oil Change Reminders</title>
 <style>
   :root {
-    --bg: #f7f8fa;
+    --bg: #f5f6f8;
     --card: #ffffff;
-    --ink: #1c2733;
-    --ink-soft: #5b6b7c;
-    --line: #e2e7ed;
-    --blue: #0a6ebd;
-    --blue-soft: #e3f0fa;
-    --green: #1e8e5a;
-    --amber: #c47f17;
-    --red: #c23934;
-    --track: #edf1f5;
+    --ink: #16202b;
+    --ink-soft: #64748b;
+    --ink-faint: #94a3b8;
+    --line: #e6eaf0;
+    --brand: #0b5fa5;
+    --brand-soft: #e8f1fa;
+    --green: #178a54;
+    --green-bg: #e7f5ee;
+    --amber: #b26a00;
+    --amber-bg: #fbf0dc;
+    --red: #c0362f;
+    --red-bg: #fbe6e4;
+    --track: #eef1f5;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    margin: 0;
-    font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    font-family: "Inter", -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
     background: var(--bg);
     color: var(--ink);
     font-size: 14px;
+    line-height: 1.4;
+    padding: 24px 20px 56px;
   }
-  .wrap { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+  .wrap { max-width: 860px; margin: 0 auto; }
 
-  .header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
-  h1 { font-size: 20px; font-weight: 600; margin: 0; }
-  .sub { color: var(--ink-soft); margin: 0 0 20px; }
+  .head {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 4px;
+  }
+  h1 {
+    font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+  }
+  .head p { color: var(--ink-soft); margin-top: 4px; font-size: 13px; }
   .refresh {
-    background: none; border: 1px solid var(--line); border-radius: 6px;
-    padding: 6px 14px; font-size: 13px; color: var(--blue); cursor: pointer;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--brand);
+    cursor: pointer; transition: background .15s;
   }
-  .refresh:hover { background: var(--blue-soft); }
+  .refresh:hover { background: var(--brand-soft); }
 
-  .vehicle {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 14px 16px;
-    margin-bottom: 10px;
+  /* summary strip */
+  .summary {
+    display: flex; gap: 10px; flex-wrap: wrap; margin: 20px 0 8px;
   }
-  .row1 { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .vname { font-weight: 600; font-size: 15px; }
-  .odo { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
-
-  .status { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
-  .status.ok       { background: #e6f4ec; color: var(--green); }
-  .status.soon     { background: #fbf1de; color: var(--amber); }
-  .status.overdue  { background: #fbe7e6; color: var(--red); }
-  .status.disabled { background: var(--track); color: var(--ink-soft); }
-
-  /* the "road" — distance traveled toward the next reminder */
-  .road { position: relative; height: 10px; background: var(--track); border-radius: 5px; margin: 12px 0 6px; overflow: hidden; }
-  .road-fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--blue); transition: width .4s ease; }
-  .road-fill.soon { background: var(--amber); }
-  .road-fill.overdue { background: var(--red); }
-  .road-ticks { position: absolute; inset: 0; display: flex; }
-  .road-ticks span { flex: 1; border-right: 2px solid rgba(255,255,255,.7); }
-  .road-ticks span:last-child { border-right: none; }
-
-  .row2 { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--ink-soft); font-size: 13px; }
-  .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .controls label { display: flex; align-items: center; gap: 6px; }
-  .controls input[type="number"] {
-    width: 84px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
-    font-size: 13px; font-variant-numeric: tabular-nums;
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; flex: 1; min-width: 120px;
   }
+  .stat .num { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .stat .lbl { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+  .stat.due .num { color: var(--red); }
+  .stat.soon .num { color: var(--amber); }
+
+  /* vehicle card */
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 12px;
+  }
+  .card-top {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-bottom: 14px;
+  }
+  .vname { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+  .vodo { font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .pill {
+    font-size: 11.5px; font-weight: 700; letter-spacing: .01em;
+    padding: 4px 11px; border-radius: 999px; white-space: nowrap;
+  }
+  .pill.ok       { background: var(--green-bg); color: var(--green); }
+  .pill.soon     { background: var(--amber-bg); color: var(--amber); }
+  .pill.overdue  { background: var(--red-bg);   color: var(--red); }
+  .pill.off      { background: var(--track);    color: var(--ink-faint); }
+
+  /* progress */
+  .bar-wrap { margin-bottom: 6px; }
+  .bar {
+    height: 8px; background: var(--track); border-radius: 999px; overflow: hidden;
+  }
+  .bar-fill {
+    height: 100%; border-radius: 999px; background: var(--brand);
+    transition: width .5s cubic-bezier(.2,.8,.2,1);
+  }
+  .bar-fill.soon { background: var(--amber); }
+  .bar-fill.overdue { background: var(--red); }
+  .bar-meta {
+    display: flex; justify-content: space-between; margin-top: 7px;
+    font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums;
+  }
+
+  /* controls row */
+  .controls {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--line);
+  }
+  .field { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
+  .field input[type="number"] {
+    width: 92px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink);
+  }
+  .field input[type="number"]:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
+  .switch { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; }
+  .switch input { width: 15px; height: 15px; accent-color: var(--brand); cursor: pointer; }
+  .spacer { flex: 1; }
   .btn {
-    background: var(--blue); color: #fff; border: none; border-radius: 6px;
-    padding: 6px 12px; font-size: 13px; cursor: pointer;
+    border: none; border-radius: 8px; padding: 8px 15px; font-size: 13px;
+    font-weight: 600; cursor: pointer; transition: filter .15s, background .15s;
   }
-  .btn:hover { filter: brightness(1.08); }
-  .btn.ghost { background: none; color: var(--blue); border: 1px solid var(--line); }
-  .btn.ghost:hover { background: var(--blue-soft); }
+  .btn-primary { background: var(--brand); color: #fff; }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-ghost { background: transparent; color: var(--brand); border: 1px solid var(--line); }
+  .btn-ghost:hover { background: var(--brand-soft); }
 
-  .empty, .loading { text-align: center; color: var(--ink-soft); padding: 48px 0; }
+  .state { text-align: center; color: var(--ink-soft); padding: 56px 20px; }
+  .state .big { font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+
   .toast {
-    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: var(--ink); color: #fff; padding: 9px 18px; border-radius: 6px;
-    font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s;
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(10px);
+    background: var(--ink); color: #fff; padding: 10px 20px; border-radius: 10px;
+    font-size: 13px; font-weight: 500; opacity: 0; pointer-events: none;
+    transition: opacity .22s, transform .22s;
   }
-  .toast.show { opacity: 1; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 560px) {
+    .card-top { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .controls { gap: 10px; }
+    .spacer { display: none; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="header">
-    <h1>Oil Change Reminders</h1>
+  <div class="head">
+    <div>
+      <h1>Oil Change Reminders</h1>
+      <p>Distance-based reminders that reset themselves. No work orders to close.</p>
+    </div>
     <button class="refresh" id="refreshBtn">Refresh</button>
   </div>
-  <p class="sub">Automatic distance-based reminders. Counters reset on their own — no work orders to complete.</p>
-  <div id="list"><div class="loading">Loading vehicles…</div></div>
+
+  <div class="summary" id="summary"></div>
+  <div id="list"><div class="state"><div class="big">Loading vehicles…</div>Reading odometers from MyGeotab.</div></div>
 </div>
 <div class="toast" id="toast"></div>
 
 <script>
 "use strict";
 
-// MUST match the ADD_IN_ID in scripts/check-oil-reminders.js
-// Generate at: https://geotab.github.io/sdk/software/guides/addin-storage/
 var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
 var DEFAULT_INTERVAL_MILES = 10000;
-var UNITS = "mi";                       // "mi" or "km" — match the script
+var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
 
 geotab.addin.oilChangeReminders = function () {
-  var api;
-  var listEl, toastEl;
+  var api, listEl, summaryEl, toastEl;
 
   function toast(msg) {
     toastEl.textContent = msg;
     toastEl.classList.add("show");
-    setTimeout(function () { toastEl.classList.remove("show"); }, 2200);
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { toastEl.classList.remove("show"); }, 2200);
   }
 
   function apiCall(method, params) {
-    return new Promise(function (resolve, reject) {
-      api.call(method, params, resolve, reject);
-    });
+    return new Promise(function (resolve, reject) { api.call(method, params, resolve, reject); });
   }
 
   function getOdometer(deviceId) {
@@ -130,124 +183,101 @@ geotab.addin.oilChangeReminders = function () {
       search: {
         deviceSearch: { id: deviceId },
         diagnosticSearch: { id: "DiagnosticOdometerAdjustmentId" },
-        fromDate: now,
-        toDate: now
+        fromDate: now, toDate: now
       }
-    }).then(function (data) {
-      return data && data.length && data[0].data != null ? data[0].data : null;
-    });
+    }).then(function (d) { return d && d.length && d[0].data != null ? d[0].data : null; });
   }
 
+  function fmt(n) { return Math.round(n).toLocaleString(); }
+
   function load() {
-    listEl.innerHTML = '<div class="loading">Loading vehicles…</div>';
+    listEl.innerHTML = '<div class="state"><div class="big">Loading vehicles…</div>Reading odometers from MyGeotab.</div>';
+    summaryEl.innerHTML = "";
 
     Promise.all([
       apiCall("Get", { typeName: "Device" }),
       apiCall("Get", { typeName: "AddInData", search: { addInId: ADD_IN_ID } })
-    ]).then(function (results) {
-      var devices = results[0].filter(function (d) {
-        return !d.activeTo || new Date(d.activeTo) > new Date();
-      });
-      var stateByDevice = {};
-      results[1].forEach(function (rec) {
+    ]).then(function (res) {
+      var devices = res[0].filter(function (d) { return !d.activeTo || new Date(d.activeTo) > new Date(); });
+      var byDevice = {};
+      res[1].forEach(function (rec) {
         var det = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
-        if (det && det.deviceId) stateByDevice[det.deviceId] = { id: rec.id, details: det };
+        if (det && det.deviceId) byDevice[det.deviceId] = { id: rec.id, details: det };
       });
-
-      var odoPromises = devices.map(function (d) { return getOdometer(d.id); });
-      Promise.all(odoPromises).then(function (odos) {
-        render(devices, odos, stateByDevice);
-      });
+      return Promise.all(devices.map(function (d) { return getOdometer(d.id); }))
+        .then(function (odos) { render(devices, odos, byDevice); });
     }).catch(function (err) {
-      listEl.innerHTML = '<div class="empty">Could not load data: ' +
-        (err && err.message ? err.message : err) + "</div>";
+      listEl.innerHTML = '<div class="state"><div class="big">Couldn\u2019t load data</div>' +
+        (err && err.message ? err.message : err) + '</div>';
     });
   }
 
-  function render(devices, odos, stateByDevice) {
+  function render(devices, odos, byDevice) {
     listEl.innerHTML = "";
-    var shown = 0;
+    var counts = { total: 0, ok: 0, soon: 0, due: 0 };
 
     devices.forEach(function (device, i) {
       var odoMeters = odos[i];
-      if (odoMeters == null) return; // no odometer data (e.g., asset trackers)
-      shown++;
+      if (odoMeters == null) return;
+      counts.total++;
 
-      var rec = stateByDevice[device.id] || null;
+      var rec = byDevice[device.id] || null;
       var det = rec ? rec.details : {
-        deviceId: device.id,
-        deviceName: device.name,
-        lastNotifiedMeters: odoMeters,
-        intervalMiles: DEFAULT_INTERVAL_MILES,
-        enabled: true,
-        lastNotifiedDate: null
+        deviceId: device.id, deviceName: device.name,
+        lastNotifiedMeters: odoMeters, intervalMiles: DEFAULT_INTERVAL_MILES,
+        enabled: true, lastNotifiedDate: null
       };
 
       var interval = det.intervalMiles || DEFAULT_INTERVAL_MILES;
-      var sinceUnits = (odoMeters - det.lastNotifiedMeters) / METERS_PER_UNIT;
-      var pct = Math.max(0, Math.min(100, (sinceUnits / interval) * 100));
-      var remaining = interval - sinceUnits;
+      var since = (odoMeters - det.lastNotifiedMeters) / METERS_PER_UNIT;
+      var pct = Math.max(0, Math.min(100, (since / interval) * 100));
+      var remaining = interval - since;
 
-      var statusClass, statusText, fillClass = "";
-      if (det.enabled === false) {
-        statusClass = "disabled"; statusText = "Reminders off";
-      } else if (remaining <= 0) {
-        statusClass = "overdue"; fillClass = "overdue";
-        statusText = "Due — reminder pending";
-      } else if (pct >= 85) {
-        statusClass = "soon"; fillClass = "soon";
-        statusText = Math.round(remaining).toLocaleString() + " " + UNITS + " to go";
-      } else {
-        statusClass = "ok";
-        statusText = Math.round(remaining).toLocaleString() + " " + UNITS + " to go";
-      }
+      var cls, pillTxt, fill = "";
+      if (det.enabled === false) { cls = "off"; pillTxt = "Off"; }
+      else if (remaining <= 0) { cls = "overdue"; fill = "overdue"; pillTxt = "Due now"; counts.due++; }
+      else if (pct >= 85) { cls = "soon"; fill = "soon"; pillTxt = "Due soon"; counts.soon++; }
+      else { cls = "ok"; pillTxt = "On track"; counts.ok++; }
 
       var card = document.createElement("div");
-      card.className = "vehicle";
+      card.className = "card";
       card.innerHTML =
-        '<div class="row1">' +
+        '<div class="card-top">' +
           '<span class="vname"></span>' +
-          '<span class="odo">' + Math.round(odoMeters / METERS_PER_UNIT).toLocaleString() + " " + UNITS + '</span>' +
-          '<span class="status ' + statusClass + '">' + statusText + '</span>' +
+          '<span class="vodo">' + fmt(odoMeters / METERS_PER_UNIT) + ' ' + UNITS + ' total</span>' +
         '</div>' +
-        '<div class="road">' +
-          '<div class="road-fill ' + fillClass + '" style="width:' + pct + '%"></div>' +
-          '<div class="road-ticks"><span></span><span></span><span></span><span></span></div>' +
+        '<div class="bar-wrap">' +
+          '<div class="bar"><div class="bar-fill ' + fill + '" style="width:' + pct + '%"></div></div>' +
+          '<div class="bar-meta">' +
+            '<span>' + fmt(Math.max(0, since)) + ' / ' + fmt(interval) + ' ' + UNITS + '</span>' +
+            '<span class="pill ' + cls + '">' + pillTxt +
+              (remaining > 0 && det.enabled !== false ? ' \u00b7 ' + fmt(remaining) + ' ' + UNITS + ' left' : '') +
+            '</span>' +
+          '</div>' +
         '</div>' +
-        '<div class="row2">' +
-          '<span>' + Math.round(sinceUnits).toLocaleString() + " " + UNITS +
-            " since last reminder" +
-            (det.lastNotifiedDate ? " (" + new Date(det.lastNotifiedDate).toLocaleDateString() + ")" : "") +
-          '</span>' +
-          '<span class="controls">' +
-            '<label>Every <input type="number" min="500" step="500" value="' + interval + '"> ' + UNITS + '</label>' +
-            '<label><input type="checkbox" ' + (det.enabled !== false ? "checked" : "") + '> On</label>' +
-            '<button class="btn ghost">Mark serviced now</button>' +
-            '<button class="btn">Save</button>' +
-          '</span>' +
+        '<div class="controls">' +
+          '<span class="field">Interval <input type="number" min="500" step="500" value="' + interval + '"> ' + UNITS + '</span>' +
+          '<label class="switch"><input type="checkbox" ' + (det.enabled !== false ? "checked" : "") + '> Reminders on</label>' +
+          '<span class="spacer"></span>' +
+          '<button class="btn btn-ghost">Mark serviced now</button>' +
+          '<button class="btn btn-primary">Save</button>' +
         '</div>';
 
       card.querySelector(".vname").textContent = device.name;
 
       var intervalInput = card.querySelector('input[type="number"]');
-      var enabledInput  = card.querySelector('input[type="checkbox"]');
-      var resetBtn      = card.querySelector(".btn.ghost");
-      var saveBtn       = card.querySelector(".btn:not(.ghost)");
+      var enabledInput = card.querySelector('input[type="checkbox"]');
+      var resetBtn = card.querySelector(".btn-ghost");
+      var saveBtn = card.querySelector(".btn-primary");
 
       function persist(newDetails) {
-        var entity = {
-          addInId: ADD_IN_ID,
-          groups: [{ id: "GroupCompanyId" }],
-          details: newDetails
-        };
+        var entity = { addInId: ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details: newDetails };
         var method = rec && rec.id ? "Set" : "Add";
         if (rec && rec.id) entity.id = rec.id;
-        return apiCall(method, { typeName: "AddInData", entity: entity })
-          .then(function (newId) {
-            if (!rec) rec = { id: newId, details: newDetails };
-            else rec.details = newDetails;
-            stateByDevice[device.id] = rec;
-          });
+        return apiCall(method, { typeName: "AddInData", entity: entity }).then(function (newId) {
+          if (!rec) rec = { id: newId, details: newDetails }; else rec.details = newDetails;
+          byDevice[device.id] = rec;
+        });
       }
 
       saveBtn.addEventListener("click", function () {
@@ -256,34 +286,39 @@ geotab.addin.oilChangeReminders = function () {
         det.deviceName = device.name;
         persist(det).then(function () { toast("Saved " + device.name); load(); });
       });
-
       resetBtn.addEventListener("click", function () {
         det.lastNotifiedMeters = odoMeters;
         det.lastNotifiedDate = new Date().toISOString();
         det.deviceName = device.name;
-        persist(det).then(function () { toast(device.name + " counter reset"); load(); });
+        persist(det).then(function () { toast(device.name + " marked serviced"); load(); });
       });
 
       listEl.appendChild(card);
     });
 
-    if (shown === 0) {
-      listEl.innerHTML = '<div class="empty">No vehicles with odometer data found.</div>';
+    if (counts.total === 0) {
+      listEl.innerHTML = '<div class="state"><div class="big">No vehicles with odometer data</div>' +
+        'Vehicles appear here once their devices report an odometer reading.</div>';
+      return;
     }
+
+    summaryEl.innerHTML =
+      '<div class="stat"><div class="num">' + counts.total + '</div><div class="lbl">Vehicles tracked</div></div>' +
+      '<div class="stat"><div class="num">' + counts.ok + '</div><div class="lbl">On track</div></div>' +
+      '<div class="stat soon"><div class="num">' + counts.soon + '</div><div class="lbl">Due soon</div></div>' +
+      '<div class="stat due"><div class="num">' + counts.due + '</div><div class="lbl">Due now</div></div>';
   }
 
   return {
-    initialize: function (freshApi, state, callback) {
+    initialize: function (freshApi, state, cb) {
       api = freshApi;
       listEl = document.getElementById("list");
+      summaryEl = document.getElementById("summary");
       toastEl = document.getElementById("toast");
       document.getElementById("refreshBtn").addEventListener("click", load);
-      callback();
+      cb();
     },
-    focus: function (freshApi) {
-      api = freshApi;
-      load();
-    },
+    focus: function (freshApi) { api = freshApi; load(); },
     blur: function () {}
   };
 };
