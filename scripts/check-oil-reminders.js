@@ -1,21 +1,20 @@
 /**
  * Oil Change Reminder — automated odometer-based notifications for MyGeotab
  *
- * MULTI-DATABASE VERSION.
+ * MULTI-DATABASE VERSION (plain numbered secrets — no JSON).
  *
- * Runs on a schedule via GitHub Actions. For EACH database listed in the
- * GEOTAB_ACCOUNTS secret it:
- *   1. Authenticates to the MyGeotab API
- *   2. Pulls current odometer for every vehicle in that database's target group
- *   3. Compares against the last-notified odometer stored in AddInData
- *   4. If a vehicle has traveled >= its interval since the last notice,
- *      it's added to that database's digest email and its counter auto-resets
+ * Add databases by setting numbered environment secrets:
+ *   DB1_DATABASE, DB1_USER, DB1_PASSWORD, DB1_EMAILTO   (+ optional DB1_LABEL,
+ *                                                          DB1_INTERVAL, DB1_GROUP)
+ *   DB2_DATABASE, DB2_USER, DB2_PASSWORD, DB2_EMAILTO
+ *   DB3_...  and so on. The script scans DB1..DB20 and runs any that are set.
  *
- * No manual completion required. The "reset" is just bumping the stored
- * last-notified odometer to the current reading.
+ * SMTP creds + EMAIL_FROM are shared across all databases.
  *
- * State is stored in MyGeotab AddInData (scoped per database automatically),
- * so the companion Add-In UI (addin/oil-reminders.html) reads the same records.
+ * For each database it authenticates, reads every vehicle's odometer, compares
+ * to the last-notified value stored in AddInData, emails a digest for any
+ * vehicle past its interval, and auto-resets that vehicle's counter.
+ * No manual completion required.
  */
 
 const nodemailer = require("nodemailer");
@@ -23,53 +22,47 @@ const nodemailer = require("nodemailer");
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
-
-// Same AddInId used in addin/oil-reminders.html. Safe to reuse across
-// databases — AddInData is isolated per database.
 const ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
 
-// "mi" or "km" — applies to all databases. Match the value in the Add-In HTML.
-const UNITS = "mi";
+const UNITS = "mi"; // "mi" or "km" — match the Add-In HTML
 const METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
 
-// Fallbacks used when an account object omits these fields
 const DEFAULT_INTERVAL_MILES = 10000;
 const DEFAULT_TARGET_GROUP_ID = "GroupCompanyId"; // whole fleet
+const MAX_DATABASES = 20; // scans DB1..DB20
 
 // ---------------------------------------------------------------------------
-// Secrets
+// Shared SMTP secrets
 // ---------------------------------------------------------------------------
-// GEOTAB_ACCOUNTS is a JSON array. Each entry:
-//   {
-//     "label": "ABC Trucking",          // for logs/email only
-//     "database": "abctrucking",
-//     "user": "svc@dynastycommunications.com",
-//     "password": "xxx",
-//     "emailTo": "maintenance@abc.com",  // comma-separated ok
-//     "intervalMiles": 10000,            // optional, defaults to 10000
-//     "targetGroupId": "GroupCompanyId", // optional, defaults to whole fleet
-//     "enabled": true                    // optional, defaults to true
-//   }
-//
-// SMTP creds + EMAIL_FROM are shared across all accounts (one sending account).
-const {
-  GEOTAB_ACCOUNTS,
-  SMTP_HOST,
-  SMTP_PORT,
-  SMTP_USER,
-  SMTP_PASS,
-  EMAIL_FROM,
-} = process.env;
+const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM } = process.env;
 
-// ---------------------------------------------------------------------------
-// Shared email transporter (created once, reused for every account)
-// ---------------------------------------------------------------------------
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: Number(SMTP_PORT || 587),
   secure: Number(SMTP_PORT) === 465,
   auth: { user: SMTP_USER, pass: SMTP_PASS },
 });
+
+// ---------------------------------------------------------------------------
+// Build the account list from numbered env vars
+// ---------------------------------------------------------------------------
+function loadAccounts() {
+  const accounts = [];
+  for (let i = 1; i <= MAX_DATABASES; i++) {
+    const database = process.env[`DB${i}_DATABASE`];
+    if (!database) continue; // slot not used
+    accounts.push({
+      label: process.env[`DB${i}_LABEL`] || database,
+      database,
+      user: process.env[`DB${i}_USER`],
+      password: process.env[`DB${i}_PASSWORD`],
+      emailTo: process.env[`DB${i}_EMAILTO`],
+      intervalMiles: Number(process.env[`DB${i}_INTERVAL`]) || DEFAULT_INTERVAL_MILES,
+      targetGroupId: process.env[`DB${i}_GROUP`] || DEFAULT_TARGET_GROUP_ID,
+    });
+  }
+  return accounts;
+}
 
 // ---------------------------------------------------------------------------
 // Per-database MyGeotab JSON-RPC client
@@ -105,9 +98,8 @@ function makeClient() {
 }
 
 // ---------------------------------------------------------------------------
-// Data helpers (take the client as an argument)
+// Data helpers
 // ---------------------------------------------------------------------------
-
 async function getDevices(client, targetGroupId) {
   const devices = await client.call("Get", {
     typeName: "Device",
@@ -129,7 +121,7 @@ async function getOdometerMeters(client, deviceId) {
     },
   });
   if (!data || data.length === 0 || data[0].data == null) return null;
-  return data[0].data; // meters
+  return data[0].data;
 }
 
 async function getState(client) {
@@ -149,11 +141,7 @@ async function getState(client) {
 }
 
 async function saveState(client, existing, details) {
-  const entity = {
-    addInId: ADD_IN_ID,
-    groups: [{ id: "GroupCompanyId" }],
-    details,
-  };
+  const entity = { addInId: ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details };
   if (existing && existing.id) {
     entity.id = existing.id;
     await client.call("Set", { typeName: "AddInData", entity });
@@ -168,7 +156,6 @@ async function sendDigest(label, emailTo, dueVehicles) {
       `\u2022 ${v.name} — ${Math.round(v.currentUnits).toLocaleString()} ${UNITS} ` +
       `(${Math.round(v.sinceLastUnits).toLocaleString()} ${UNITS} since last reminder)`
   );
-
   const body = [
     `The following vehicle(s) have reached their oil change interval:`,
     ``,
@@ -193,22 +180,15 @@ async function sendDigest(label, emailTo, dueVehicles) {
 // Process ONE database
 // ---------------------------------------------------------------------------
 async function processAccount(account) {
-  const label = account.label || account.database;
-  const intervalMilesDefault = account.intervalMiles || DEFAULT_INTERVAL_MILES;
-  const targetGroupId = account.targetGroupId || DEFAULT_TARGET_GROUP_ID;
-
+  const label = account.label;
   console.log(`\n=== ${label} (${account.database}) ===`);
 
   const client = makeClient();
-  const server = await client.authenticate(
-    account.database,
-    account.user,
-    account.password
-  );
+  const server = await client.authenticate(account.database, account.user, account.password);
   console.log(`  Authenticated on ${server}`);
 
   const [devices, state] = await Promise.all([
-    getDevices(client, targetGroupId),
+    getDevices(client, account.targetGroupId),
     getState(client),
   ]);
   console.log(`  Checking ${devices.length} vehicle(s)…`);
@@ -229,7 +209,7 @@ async function processAccount(account) {
           deviceId: device.id,
           deviceName: device.name,
           lastNotifiedMeters: odoMeters,
-          intervalMiles: intervalMilesDefault,
+          intervalMiles: account.intervalMiles,
           enabled: true,
           lastNotifiedDate: null,
         };
@@ -250,7 +230,7 @@ async function processAccount(account) {
     }
 
     const intervalMeters =
-      (details.intervalMiles || intervalMilesDefault) * METERS_PER_UNIT;
+      (details.intervalMiles || account.intervalMiles) * METERS_PER_UNIT;
     const sinceLast = odoMeters - details.lastNotifiedMeters;
 
     if (sinceLast >= intervalMeters) {
@@ -273,7 +253,7 @@ async function processAccount(account) {
     if (account.emailTo) {
       await sendDigest(label, account.emailTo, due);
     } else {
-      console.log(`  ${due.length} vehicle(s) due but no emailTo set — skipping email`);
+      console.log(`  ${due.length} vehicle(s) due but no DB email set — skipping email`);
     }
   } else {
     console.log(`  No vehicles due. No email sent.`);
@@ -281,31 +261,24 @@ async function processAccount(account) {
 }
 
 // ---------------------------------------------------------------------------
-// Main — loop over all accounts
+// Main
 // ---------------------------------------------------------------------------
 async function main() {
-  let accounts;
-  try {
-    accounts = JSON.parse(GEOTAB_ACCOUNTS);
-  } catch (e) {
+  const accounts = loadAccounts();
+  if (accounts.length === 0) {
     throw new Error(
-      "GEOTAB_ACCOUNTS secret is not valid JSON. Check for missing commas/quotes."
+      "No databases configured. Set DB1_DATABASE, DB1_USER, DB1_PASSWORD, DB1_EMAILTO (and DB2_* etc)."
     );
   }
-  if (!Array.isArray(accounts)) {
-    throw new Error("GEOTAB_ACCOUNTS must be a JSON array of account objects.");
-  }
-
-  const active = accounts.filter((a) => a.enabled !== false);
-  console.log(`Loaded ${accounts.length} account(s), ${active.length} active.`);
+  console.log(`Found ${accounts.length} database(s) configured.`);
 
   let hadError = false;
-  for (const account of active) {
+  for (const account of accounts) {
     try {
       await processAccount(account);
     } catch (err) {
       hadError = true;
-      console.error(`  ERROR on ${account.label || account.database}: ${err.message}`);
+      console.error(`  ERROR on ${account.label}: ${err.message}`);
     }
   }
 
