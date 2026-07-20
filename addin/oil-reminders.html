@@ -4,155 +4,20 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Oil Change Reminders</title>
-<style>
-  :root {
-    --bg: #f5f6f8;
-    --card: #ffffff;
-    --ink: #16202b;
-    --ink-soft: #64748b;
-    --ink-faint: #94a3b8;
-    --line: #e6eaf0;
-    --brand: #0b5fa5;
-    --brand-soft: #e8f1fa;
-    --green: #178a54;
-    --green-bg: #e7f5ee;
-    --amber: #b26a00;
-    --amber-bg: #fbf0dc;
-    --red: #c0362f;
-    --red-bg: #fbe6e4;
-    --track: #eef1f5;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: "Inter", -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-    background: var(--bg);
-    color: var(--ink);
-    font-size: 14px;
-    line-height: 1.4;
-    padding: 24px 20px 56px;
-  }
-  .wrap { max-width: 860px; margin: 0 auto; }
-
-  .head {
-    display: flex; align-items: flex-end; justify-content: space-between;
-    gap: 16px; flex-wrap: wrap; margin-bottom: 4px;
-  }
-  h1 {
-    font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
-  }
-  .head p { color: var(--ink-soft); margin-top: 4px; font-size: 13px; }
-  .refresh {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
-    padding: 8px 16px; font-size: 13px; font-weight: 600; color: var(--brand);
-    cursor: pointer; transition: background .15s;
-  }
-  .refresh:hover { background: var(--brand-soft); }
-
-  /* summary strip */
-  .summary {
-    display: flex; gap: 10px; flex-wrap: wrap; margin: 20px 0 8px;
-  }
-  .stat {
-    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-    padding: 12px 16px; flex: 1; min-width: 120px;
-  }
-  .stat .num { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
-  .stat .lbl { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
-  .stat.due .num { color: var(--red); }
-  .stat.soon .num { color: var(--amber); }
-
-  /* vehicle card */
-  .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-    padding: 16px 18px; margin-bottom: 12px;
-  }
-  .card-top {
-    display: flex; align-items: baseline; justify-content: space-between;
-    gap: 12px; margin-bottom: 14px;
-  }
-  .vname { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
-  .vodo { font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
-
-  .pill {
-    font-size: 11.5px; font-weight: 700; letter-spacing: .01em;
-    padding: 4px 11px; border-radius: 999px; white-space: nowrap;
-  }
-  .pill.ok       { background: var(--green-bg); color: var(--green); }
-  .pill.soon     { background: var(--amber-bg); color: var(--amber); }
-  .pill.overdue  { background: var(--red-bg);   color: var(--red); }
-  .pill.off      { background: var(--track);    color: var(--ink-faint); }
-
-  /* progress */
-  .bar-wrap { margin-bottom: 6px; }
-  .bar {
-    height: 8px; background: var(--track); border-radius: 999px; overflow: hidden;
-  }
-  .bar-fill {
-    height: 100%; border-radius: 999px; background: var(--brand);
-    transition: width .5s cubic-bezier(.2,.8,.2,1);
-  }
-  .bar-fill.soon { background: var(--amber); }
-  .bar-fill.overdue { background: var(--red); }
-  .bar-meta {
-    display: flex; justify-content: space-between; margin-top: 7px;
-    font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums;
-  }
-
-  /* controls row */
-  .controls {
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    margin-top: 15px; padding-top: 14px; border-top: 1px solid var(--line);
-  }
-  .field { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
-  .field input[type="number"] {
-    width: 92px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px;
-    font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink);
-  }
-  .field input[type="number"]:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
-  .switch { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; }
-  .switch input { width: 15px; height: 15px; accent-color: var(--brand); cursor: pointer; }
-  .spacer { flex: 1; }
-  .btn {
-    border: none; border-radius: 8px; padding: 8px 15px; font-size: 13px;
-    font-weight: 600; cursor: pointer; transition: filter .15s, background .15s;
-  }
-  .btn-primary { background: var(--brand); color: #fff; }
-  .btn-primary:hover { filter: brightness(1.08); }
-  .btn-ghost { background: transparent; color: var(--brand); border: 1px solid var(--line); }
-  .btn-ghost:hover { background: var(--brand-soft); }
-
-  .state { text-align: center; color: var(--ink-soft); padding: 56px 20px; }
-  .state .big { font-size: 15px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
-
-  .toast {
-    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(10px);
-    background: var(--ink); color: #fff; padding: 10px 20px; border-radius: 10px;
-    font-size: 13px; font-weight: 500; opacity: 0; pointer-events: none;
-    transition: opacity .22s, transform .22s;
-  }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-  @media (max-width: 560px) {
-    .card-top { flex-direction: column; align-items: flex-start; gap: 4px; }
-    .controls { gap: 10px; }
-    .spacer { display: none; }
-  }
-</style>
 </head>
-<body>
-<div class="wrap">
-  <div class="head">
+<body style="margin:0; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; background:#f5f6f8; color:#16202b; font-size:14px; line-height:1.4;">
+<div style="max-width:860px; margin:0 auto; padding:24px 20px 56px;">
+  <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:4px;">
     <div>
-      <h1>Oil Change Reminders</h1>
-      <p>Distance-based reminders that reset themselves. No work orders to close.</p>
+      <div style="font-size:22px; font-weight:700; letter-spacing:-0.02em;">Oil Change Reminders</div>
+      <div style="color:#64748b; margin-top:4px; font-size:13px;">Distance-based reminders that reset themselves. No work orders to close.</div>
     </div>
-    <button class="refresh" id="refreshBtn">Refresh</button>
+    <button id="refreshBtn" style="background:#ffffff; border:1px solid #e6eaf0; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; color:#0b5fa5; cursor:pointer;">Refresh</button>
   </div>
-
-  <div class="summary" id="summary"></div>
-  <div id="list"><div class="state"><div class="big">Loading vehicles…</div>Reading odometers from MyGeotab.</div></div>
+  <div id="summary" style="display:flex; gap:10px; flex-wrap:wrap; margin:20px 0 8px;"></div>
+  <div id="list"><div style="text-align:center; color:#64748b; padding:56px 20px;">Loading vehicles…</div></div>
 </div>
-<div class="toast" id="toast"></div>
+<div id="toast" style="position:fixed; bottom:22px; left:50%; transform:translateX(-50%) translateY(10px); background:#16202b; color:#fff; padding:10px 20px; border-radius:10px; font-size:13px; font-weight:500; opacity:0; pointer-events:none; transition:opacity .22s, transform .22s; z-index:99;"></div>
 
 <script>
 "use strict";
@@ -162,14 +27,25 @@ var DEFAULT_INTERVAL_MILES = 10000;
 var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
 
+var COL = {
+  card:"#ffffff", ink:"#16202b", soft:"#64748b", faint:"#94a3b8", line:"#e6eaf0",
+  brand:"#0b5fa5", brandSoft:"#e8f1fa", track:"#eef1f5",
+  green:"#178a54", greenBg:"#e7f5ee", amber:"#b26a00", amberBg:"#fbf0dc",
+  red:"#c0362f", redBg:"#fbe6e4", page:"#f5f6f8"
+};
+
 geotab.addin.oilChangeReminders = function () {
   var api, listEl, summaryEl, toastEl;
 
   function toast(msg) {
     toastEl.textContent = msg;
-    toastEl.classList.add("show");
+    toastEl.style.opacity = "1";
+    toastEl.style.transform = "translateX(-50%) translateY(0)";
     clearTimeout(toast._t);
-    toast._t = setTimeout(function () { toastEl.classList.remove("show"); }, 2200);
+    toast._t = setTimeout(function () {
+      toastEl.style.opacity = "0";
+      toastEl.style.transform = "translateX(-50%) translateY(10px)";
+    }, 2200);
   }
 
   function apiCall(method, params) {
@@ -191,7 +67,7 @@ geotab.addin.oilChangeReminders = function () {
   function fmt(n) { return Math.round(n).toLocaleString(); }
 
   function load() {
-    listEl.innerHTML = '<div class="state"><div class="big">Loading vehicles…</div>Reading odometers from MyGeotab.</div>';
+    listEl.innerHTML = '<div style="text-align:center; color:' + COL.soft + '; padding:56px 20px;">Loading vehicles…</div>';
     summaryEl.innerHTML = "";
 
     Promise.all([
@@ -207,9 +83,14 @@ geotab.addin.oilChangeReminders = function () {
       return Promise.all(devices.map(function (d) { return getOdometer(d.id); }))
         .then(function (odos) { render(devices, odos, byDevice); });
     }).catch(function (err) {
-      listEl.innerHTML = '<div class="state"><div class="big">Couldn\u2019t load data</div>' +
+      listEl.innerHTML = '<div style="text-align:center; color:' + COL.soft + '; padding:56px 20px;">Couldn\u2019t load data: ' +
         (err && err.message ? err.message : err) + '</div>';
     });
+  }
+
+  function statPill(text, bg, fg) {
+    return '<span style="font-size:11.5px; font-weight:700; padding:4px 11px; border-radius:999px; white-space:nowrap; background:' +
+      bg + '; color:' + fg + ';">' + text + '</span>';
   }
 
   function render(devices, odos, byDevice) {
@@ -233,42 +114,47 @@ geotab.addin.oilChangeReminders = function () {
       var pct = Math.max(0, Math.min(100, (since / interval) * 100));
       var remaining = interval - since;
 
-      var cls, pillTxt, fill = "";
-      if (det.enabled === false) { cls = "off"; pillTxt = "Off"; }
-      else if (remaining <= 0) { cls = "overdue"; fill = "overdue"; pillTxt = "Due now"; counts.due++; }
-      else if (pct >= 85) { cls = "soon"; fill = "soon"; pillTxt = "Due soon"; counts.soon++; }
-      else { cls = "ok"; pillTxt = "On track"; counts.ok++; }
+      var pillHtml, fillColor;
+      if (det.enabled === false) {
+        pillHtml = statPill("Off", COL.track, COL.faint); fillColor = COL.faint;
+      } else if (remaining <= 0) {
+        pillHtml = statPill("Due now", COL.redBg, COL.red); fillColor = COL.red; counts.due++;
+      } else if (pct >= 85) {
+        pillHtml = statPill("Due soon \u00b7 " + fmt(remaining) + " " + UNITS + " left", COL.amberBg, COL.amber); fillColor = COL.amber; counts.soon++;
+      } else {
+        pillHtml = statPill("On track \u00b7 " + fmt(remaining) + " " + UNITS + " left", COL.greenBg, COL.green); fillColor = COL.brand; counts.ok++;
+      }
 
       var card = document.createElement("div");
-      card.className = "card";
+      card.style.cssText = "background:" + COL.card + "; border:1px solid " + COL.line + "; border-radius:12px; padding:16px 18px; margin-bottom:12px;";
       card.innerHTML =
-        '<div class="card-top">' +
-          '<span class="vname"></span>' +
-          '<span class="vodo">' + fmt(odoMeters / METERS_PER_UNIT) + ' ' + UNITS + ' total</span>' +
+        '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px;">' +
+          '<span style="font-size:16px; font-weight:650;"></span>' +
+          '<span style="font-size:13px; color:' + COL.soft + '; white-space:nowrap;">' + fmt(odoMeters / METERS_PER_UNIT) + ' ' + UNITS + ' total</span>' +
         '</div>' +
-        '<div class="bar-wrap">' +
-          '<div class="bar"><div class="bar-fill ' + fill + '" style="width:' + pct + '%"></div></div>' +
-          '<div class="bar-meta">' +
+        '<div>' +
+          '<div style="height:8px; background:' + COL.track + '; border-radius:999px; overflow:hidden;">' +
+            '<div style="height:100%; width:' + pct + '%; border-radius:999px; background:' + fillColor + '; transition:width .5s;"></div>' +
+          '</div>' +
+          '<div style="display:flex; justify-content:space-between; margin-top:7px; font-size:12px; color:' + COL.soft + ';">' +
             '<span>' + fmt(Math.max(0, since)) + ' / ' + fmt(interval) + ' ' + UNITS + '</span>' +
-            '<span class="pill ' + cls + '">' + pillTxt +
-              (remaining > 0 && det.enabled !== false ? ' \u00b7 ' + fmt(remaining) + ' ' + UNITS + ' left' : '') +
-            '</span>' +
+            pillHtml +
           '</div>' +
         '</div>' +
-        '<div class="controls">' +
-          '<span class="field">Interval <input type="number" min="500" step="500" value="' + interval + '"> ' + UNITS + '</span>' +
-          '<label class="switch"><input type="checkbox" ' + (det.enabled !== false ? "checked" : "") + '> Reminders on</label>' +
-          '<span class="spacer"></span>' +
-          '<button class="btn btn-ghost">Mark serviced now</button>' +
-          '<button class="btn btn-primary">Save</button>' +
+        '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid ' + COL.line + ';">' +
+          '<span style="font-size:13px; color:' + COL.soft + ';">Interval <input type="number" min="500" step="500" value="' + interval + '" style="width:92px; padding:7px 9px; border:1px solid ' + COL.line + '; border-radius:8px; font-size:13px; color:' + COL.ink + ';"> ' + UNITS + '</span>' +
+          '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:' + COL.soft + '; cursor:pointer;"><input type="checkbox" ' + (det.enabled !== false ? "checked" : "") + ' style="width:15px; height:15px; cursor:pointer;"> Reminders on</label>' +
+          '<span style="flex:1;"></span>' +
+          '<button data-act="reset" style="border:1px solid ' + COL.line + '; background:transparent; color:' + COL.brand + '; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
+          '<button data-act="save" style="border:none; background:' + COL.brand + '; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
         '</div>';
 
-      card.querySelector(".vname").textContent = device.name;
+      card.querySelector("span").textContent = device.name;
 
       var intervalInput = card.querySelector('input[type="number"]');
       var enabledInput = card.querySelector('input[type="checkbox"]');
-      var resetBtn = card.querySelector(".btn-ghost");
-      var saveBtn = card.querySelector(".btn-primary");
+      var resetBtn = card.querySelector('[data-act="reset"]');
+      var saveBtn = card.querySelector('[data-act="save"]');
 
       function persist(newDetails) {
         var entity = { addInId: ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details: newDetails };
@@ -297,16 +183,20 @@ geotab.addin.oilChangeReminders = function () {
     });
 
     if (counts.total === 0) {
-      listEl.innerHTML = '<div class="state"><div class="big">No vehicles with odometer data</div>' +
-        'Vehicles appear here once their devices report an odometer reading.</div>';
+      listEl.innerHTML = '<div style="text-align:center; color:' + COL.soft + '; padding:56px 20px;">No vehicles with odometer data yet.</div>';
       return;
     }
 
+    function statCard(num, label, color) {
+      return '<div style="background:' + COL.card + '; border:1px solid ' + COL.line + '; border-radius:10px; padding:12px 16px; flex:1; min-width:120px;">' +
+        '<div style="font-size:24px; font-weight:700; letter-spacing:-0.02em; color:' + (color || COL.ink) + ';">' + num + '</div>' +
+        '<div style="font-size:12px; color:' + COL.soft + '; margin-top:2px;">' + label + '</div></div>';
+    }
     summaryEl.innerHTML =
-      '<div class="stat"><div class="num">' + counts.total + '</div><div class="lbl">Vehicles tracked</div></div>' +
-      '<div class="stat"><div class="num">' + counts.ok + '</div><div class="lbl">On track</div></div>' +
-      '<div class="stat soon"><div class="num">' + counts.soon + '</div><div class="lbl">Due soon</div></div>' +
-      '<div class="stat due"><div class="num">' + counts.due + '</div><div class="lbl">Due now</div></div>';
+      statCard(counts.total, "Vehicles tracked") +
+      statCard(counts.ok, "On track") +
+      statCard(counts.soon, "Due soon", counts.soon ? COL.amber : COL.ink) +
+      statCard(counts.due, "Due now", counts.due ? COL.red : COL.ink);
   }
 
   return {
