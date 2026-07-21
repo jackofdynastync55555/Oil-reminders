@@ -23,7 +23,7 @@ const nodemailer = require("nodemailer");
 // CONFIG
 // ---------------------------------------------------------------------------
 const ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
-const CUSTOM_ADD_IN_ID = "aWI4NTRlNjItNzc5Ny1jdXN0"; // custom reminders store
+const CUSTOM_ADD_IN_ID = "ajE5ODViNGYtOTJmZC0wODk"; // custom reminders store
 
 const UNITS = "mi"; // "mi" or "km" — match the Add-In HTML
 const METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
@@ -37,12 +37,17 @@ const MAX_DATABASES = 20; // scans DB1..DB20
 // ---------------------------------------------------------------------------
 const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM } = process.env;
 
-const transporter = nodemailer.createTransport({
+const transporterConfig = {
   host: SMTP_HOST,
   port: Number(SMTP_PORT || 587),
   secure: Number(SMTP_PORT) === 465,
-  auth: { user: SMTP_USER, pass: SMTP_PASS },
-});
+};
+// Only attach auth if both are present — otherwise nodemailer tries PLAIN with
+// empty creds and throws "Missing credentials for PLAIN".
+if (SMTP_USER && SMTP_PASS) {
+  transporterConfig.auth = { user: SMTP_USER, pass: SMTP_PASS };
+}
+const transporter = nodemailer.createTransport(transporterConfig);
 
 // ---------------------------------------------------------------------------
 // Build the account list from numbered env vars
