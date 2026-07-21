@@ -12,19 +12,22 @@
       <div id="appTitle" style="font-size:23px; font-weight:700; letter-spacing:-0.02em;">DynastyJack Maintenance</div>
       <div id="appSub" style="margin-top:4px; font-size:13px;">Fleet-wide maintenance visibility — faults, service, and device health in one place.</div>
     </div>
-    <div style="display:flex; gap:8px;">
+    <div style="display:flex; gap:8px; align-items:center;">
+      <select id="groupSelect" style="border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; max-width:220px;"></select>
       <button id="themeBtn" style="border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer;">Light</button>
       <button id="refreshBtn" style="border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Refresh</button>
     </div>
   </div>
 
-  <div id="tabs" style="display:flex; gap:4px; margin-bottom:20px;">
+  <div id="tabs" style="display:flex; gap:4px; margin-bottom:20px; flex-wrap:wrap;">
     <button data-tab="health" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Fleet Health</button>
+    <button data-tab="faults" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Engine Faults</button>
     <button data-tab="oil" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Oil Reminders</button>
     <button data-tab="custom" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Custom Reminders</button>
   </div>
 
   <div id="health"></div>
+  <div id="faults" style="display:none;"></div>
   <div id="oil" style="display:none;"></div>
   <div id="custom" style="display:none;"></div>
 </div>
@@ -59,7 +62,11 @@ var theme = "dark";
 var C = THEMES[theme];
 
 geotab.addin.jackMaintenance = function () {
-  var api, toastEl, healthEl, oilEl, customEl, bodyEl, rootEl;
+  var api, toastEl, healthEl, oilEl, customEl, faultsEl, bodyEl, rootEl, groupSelectEl;
+  var allGroups = [];        // raw group list
+  var groupChildren = {};    // parentId -> [childId,...]
+  var selectedGroupId = null; // null = whole fleet
+  var deviceGroups = {};     // deviceId -> [groupId,...]
   var expandedAsset = null; // device id whose detail panel is open
   var healthFilter = null;  // null | 'red' | 'amber' | 'green' — summary card filter
   var oilFilter = null;     // null | 'all' | 'ok' | 'soon' | 'due' — oil summary filter
@@ -100,8 +107,69 @@ geotab.addin.jackMaintenance = function () {
 
   function getDevices() {
     return apiCall("Get", { typeName: "Device" }).then(function (d) {
-      return d.filter(isRealGoDevice);
+      var real = d.filter(isRealGoDevice);
+      // capture group membership for filtering
+      deviceGroups = {};
+      real.forEach(function (dev) {
+        deviceGroups[dev.id] = (dev.groups || []).map(function (g){ return g.id; });
+      });
+      return real;
     });
+  }
+
+  // Fetch the group tree once; build parent->children map for hierarchical filtering
+  function getGroups() {
+    return apiCall("Get", { typeName: "Group" }).then(function (groups) {
+      allGroups = groups || [];
+      groupChildren = {};
+      allGroups.forEach(function (g) {
+        (g.children || []).forEach(function (c) {
+          if (!groupChildren[g.id]) groupChildren[g.id] = [];
+          groupChildren[g.id].push(c.id);
+        });
+      });
+      return allGroups;
+    }).catch(function(){ allGroups=[]; return []; });
+  }
+
+  // All descendant group ids of a group (inclusive), for hierarchical selection
+  function groupWithDescendants(groupId) {
+    var out = {}; var stack = [groupId];
+    while (stack.length) {
+      var g = stack.pop();
+      if (out[g]) continue;
+      out[g] = true;
+      (groupChildren[g] || []).forEach(function (c){ stack.push(c); });
+    }
+    return out;
+  }
+
+  // Filter a device list by the currently selected group (+ its sub-groups)
+  function filterByGroup(devices) {
+    if (!selectedGroupId) return devices;
+    var allowed = groupWithDescendants(selectedGroupId);
+    return devices.filter(function (dev) {
+      var gs = deviceGroups[dev.id] || [];
+      return gs.some(function (gid){ return allowed[gid]; });
+    });
+  }
+
+  // Build the dropdown options with indentation to show hierarchy
+  function populateGroupSelect() {
+    if (!groupSelectEl) return;
+    // find roots (groups not listed as anyone's child)
+    var isChild = {};
+    Object.keys(groupChildren).forEach(function (p){ groupChildren[p].forEach(function (c){ isChild[c]=true; }); });
+    var nameById = {}; allGroups.forEach(function (g){ nameById[g.id] = (g.name||"").trim() || g.id; });
+    var opts = ['<option value="">All groups (whole fleet)</option>'];
+    function walk(id, depth) {
+      var nm = nameById[id] || id;
+      // skip the synthetic root-ish entries with blank names
+      if (nm && nm !== id) opts.push('<option value="'+esc(id)+'"'+(id===selectedGroupId?' selected':'')+'>'+ "\u00a0\u00a0".repeat(depth) + esc(nm)+'</option>');
+      (groupChildren[id] || []).forEach(function (c){ walk(c, depth+1); });
+    }
+    allGroups.forEach(function (g){ if (!isChild[g.id]) walk(g.id, 0); });
+    groupSelectEl.innerHTML = opts.join("");
   }
   function getOilState() {
     return apiCall("Get", { typeName: "AddInData", search: { addInId: ADD_IN_ID } }).then(function (recs) {
@@ -196,7 +264,7 @@ geotab.addin.jackMaintenance = function () {
             var when = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
             if (!latest[id] || when > latest[id].when) latest[id] = { value: sd.data, when: when };
           });
-          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, _raw:[] };
+          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, _raw:[] };
           Object.keys(latest).forEach(function (id) {
             var meta = diagMetaCache[id] || { name:id };
             var nm = (meta.name||"").toLowerCase();
@@ -206,6 +274,8 @@ geotab.addin.jackMaintenance = function () {
             if (corner) {
               var psi = paToPsi(val);
               if (psi != null && psi > 0 && psi < 200 && corner !== "generic") info.tires[corner] = psi;
+            } else if (/engine oil life remaining|oil life/.test(nm)) {
+              info.oilLife = val; // percentage remaining, from the vehicle's own monitor
             } else if (/fuel level/.test(nm)) {
               info.fuel = val; // percentage
             } else if (/engine speed|\brpm\b/.test(nm)) {
@@ -531,6 +601,10 @@ geotab.addin.jackMaintenance = function () {
     if (sensors && sensors.engineHours != null) {
       rows += readRow("Engine hours", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.engineHours)+' h</span>');
     }
+    if (sensors && sensors.oilLife != null) {
+      var olc = sensors.oilLife < 15 ? C.red : (sensors.oilLife < 30 ? C.amber : C.green);
+      rows += readRow("Oil life remaining", '<span style="color:'+olc+'; font-weight:600;">'+Math.round(sensors.oilLife)+'%</span>');
+    }
     if (h.oil) {
       var oc = h.oil.remaining<=0?C.red:(h.oil.remaining<=h.oil.interval*0.15?C.amber:C.green);
       rows += readRow("Oil change", '<span style="color:'+oc+'; font-weight:600;">' +
@@ -668,8 +742,9 @@ geotab.addin.jackMaintenance = function () {
   }
 
   // ---- OIL tab (editable, unchanged logic) ---------------------------
-  function renderOil(devices, odoMap, oilMap) {
+  function renderOil(devices, odoMap, oilMap, sensorMap) {
     if (!oilEl) return;
+    sensorMap = sensorMap || {};
     var counts = { total:0, ok:0, soon:0, due:0 };
     // First pass: compute each vehicle's status so we can count + filter
     var items = [];
@@ -716,6 +791,12 @@ geotab.addin.jackMaintenance = function () {
       else if (it.status==="due"){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
       else if (it.status==="soon"){ pillHtml=pill("Due soon \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.amberBg,C.amber); fill=C.amber; }
       else { pillHtml=pill("On track \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.greenBg,C.green); fill=C.brand; }
+      var sensors = sensorMap[device.id];
+      var oilLifeBadge = "";
+      if (sensors && sensors.oilLife != null) {
+        var olc = sensors.oilLife < 15 ? C.red : (sensors.oilLife < 30 ? C.amber : C.green);
+        oilLifeBadge = '<span style="font-size:12px; color:'+olc+'; font-weight:600; margin-right:12px;">Oil life '+Math.round(sensors.oilLife)+'%</span>';
+      }
       var histHtml = "";
       var hist = (det.history || []).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
       if (hist.length) {
@@ -725,8 +806,9 @@ geotab.addin.jackMaintenance = function () {
             var mi = e.odoMeters!=null ? fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS : "—";
             var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
             var src = e.source==="auto" ? "auto-reset" : "marked serviced";
+            var ol = (e.oilLife!=null) ? ' \u00b7 oil life was '+Math.round(e.oilLife)+'%' : '';
             return '<div style="display:flex; justify-content:space-between; font-size:12.5px; color:'+C.soft+'; padding:4px 0;">' +
-              '<span>'+dt+' \u00b7 '+src+'</span><span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span></div>';
+              '<span>'+dt+' \u00b7 '+src+ol+'</span><span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span></div>';
           }).join("") +
         '</div>';
       }
@@ -736,7 +818,7 @@ geotab.addin.jackMaintenance = function () {
       card.innerHTML =
         '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px;">' +
           '<span style="font-size:16px; font-weight:650; color:'+C.ink+';">'+esc(device.name)+'</span>' +
-          '<span style="font-size:13px; color:'+C.soft+';">'+fmt(odoMeters/METERS_PER_UNIT)+' '+UNITS+' total</span></div>' +
+          '<span style="font-size:13px; color:'+C.soft+';">'+oilLifeBadge+fmt(odoMeters/METERS_PER_UNIT)+' '+UNITS+' total</span></div>' +
         '<div><div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;">' +
           '<div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
           '<div style="display:flex; justify-content:space-between; margin-top:7px; font-size:12px; color:'+C.soft+';">' +
@@ -760,7 +842,8 @@ geotab.addin.jackMaintenance = function () {
         det.lastNotifiedMeters = odoMeters; det.lastNotifiedDate = new Date().toISOString(); det.deviceName = device.name;
         det.emailPending = true; det.emailPendingReason = "serviced"; det.emailPendingOdoMeters = odoMeters;
         if (!det.history) det.history = [];
-        det.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "manual" });
+        var ol = (sensors && sensors.oilLife != null) ? sensors.oilLife : null;
+        det.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "manual", oilLife: ol });
         persistOil(rec, det, device, oilMap).then(function () { toast(device.name+" marked serviced — confirmation queued"); reloadAll(); });
       });
       frag.appendChild(card);
@@ -773,11 +856,11 @@ geotab.addin.jackMaintenance = function () {
       el.addEventListener("click", function () {
         var f = el.getAttribute("data-oilfilter");
         oilFilter = (oilFilter===f) ? null : f;
-        renderOil(devices, odoMap, oilMap);
+        renderOil(devices, odoMap, oilMap, sensorMap);
       });
     });
     var cof = document.getElementById("clearOilFilter");
-    if (cof) cof.addEventListener("click", function () { oilFilter=null; renderOil(devices, odoMap, oilMap); });
+    if (cof) cof.addEventListener("click", function () { oilFilter=null; renderOil(devices, odoMap, oilMap, sensorMap); });
   }
   function oilSumCard(num, label, fg, filterKey) {
     var active = oilFilter===filterKey;
@@ -937,6 +1020,95 @@ geotab.addin.jackMaintenance = function () {
   }
   function cssIdSel(s) { return String(s).replace(/["\\]/g,"\\$&"); }
 
+  // ---- ENGINE FAULTS chart tab ---------------------------------------
+  function renderFaults(devices, faultMap) {
+    if (!faultsEl) return;
+    // aggregate per vehicle: total fault count + distinct code count
+    var rows = devices.map(function (d) {
+      var f = faultMap[d.id];
+      var total = f ? f.total : 0;
+      var codes = {};
+      if (f) f.items.forEach(function (it){ codes[(it.diagId||it.code)] = true; });
+      return { device:d, count: total, codeCount: Object.keys(codes).length };
+    }).filter(function (r){ return r.count > 0; })
+      .sort(function (a,b){ return b.count - a.count; });
+
+    if (!rows.length) {
+      faultsEl.innerHTML = '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:40px 20px; text-align:center; color:'+C.soft+';">No active engine faults in the selected scope. 🎉</div>';
+      return;
+    }
+
+    var maxCount = Math.max.apply(null, rows.map(function (r){ return r.count; }));
+    var maxCodes = Math.max.apply(null, rows.map(function (r){ return r.codeCount; }));
+
+    // chart dims
+    var n = rows.length;
+    var barW = Math.max(26, Math.min(60, Math.floor(760 / n)));
+    var gap = 14;
+    var chartW = Math.max(760, n * (barW + gap) + 60);
+    var chartH = 300, padT = 20, padB = 120, padL = 46, padR = 46;
+    var plotH = chartH - padT - padB;
+    var plotBottom = padT + plotH;
+
+    function xFor(i){ return padL + i*(barW+gap) + gap/2; }
+    function yCount(v){ return padT + plotH - (maxCount? (v/maxCount)*plotH : 0); }
+    function yCodes(v){ return padT + plotH - (maxCodes? (v/maxCodes)*plotH : 0); }
+
+    var svg = '<svg viewBox="0 0 '+chartW+' '+chartH+'" width="100%" xmlns="http://www.w3.org/2000/svg" style="min-width:'+chartW+'px;">';
+    // axes
+    svg += '<line x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+plotBottom+'" stroke="'+C.line+'"/>';
+    svg += '<line x1="'+(chartW-padR)+'" y1="'+padT+'" x2="'+(chartW-padR)+'" y2="'+plotBottom+'" stroke="'+C.line+'"/>';
+    svg += '<line x1="'+padL+'" y1="'+plotBottom+'" x2="'+(chartW-padR)+'" y2="'+plotBottom+'" stroke="'+C.line+'"/>';
+    // axis labels
+    svg += '<text x="'+padL+'" y="'+(padT-6)+'" font-size="10" fill="'+C.soft+'" text-anchor="middle">Faults</text>';
+    svg += '<text x="'+(chartW-padR)+'" y="'+(padT-6)+'" font-size="10" fill="'+C.soft+'" text-anchor="middle">Codes</text>';
+
+    // bars + value labels + x labels
+    rows.forEach(function (r, i) {
+      var x = xFor(i), h = plotBottom - yCount(r.count);
+      svg += '<rect data-fdev="'+esc(r.device.id)+'" x="'+x+'" y="'+yCount(r.count)+'" width="'+barW+'" height="'+Math.max(0,h)+'" rx="3" fill="'+C.brand+'" opacity="0.85" style="cursor:pointer;"/>';
+      svg += '<text x="'+(x+barW/2)+'" y="'+(yCount(r.count)-5)+'" font-size="11" font-weight="700" fill="'+C.ink+'" text-anchor="middle">'+r.count+'</text>';
+      // rotated vehicle name
+      var nm = r.device.name.length>16 ? r.device.name.slice(0,15)+"…" : r.device.name;
+      svg += '<text x="'+(x+barW/2)+'" y="'+(plotBottom+12)+'" font-size="10" fill="'+C.soft+'" text-anchor="end" transform="rotate(-45 '+(x+barW/2)+' '+(plotBottom+12)+')">'+esc(nm)+'</text>';
+    });
+
+    // line for code counts
+    var pts = rows.map(function (r,i){ return (xFor(i)+barW/2)+","+yCodes(r.codeCount); });
+    svg += '<polyline points="'+pts.join(" ")+'" fill="none" stroke="'+C.amber+'" stroke-width="2"/>';
+    rows.forEach(function (r,i){
+      var cx = xFor(i)+barW/2, cy = yCodes(r.codeCount);
+      svg += '<circle cx="'+cx+'" cy="'+cy+'" r="3.5" fill="'+C.amber+'"/>';
+      svg += '<text x="'+cx+'" y="'+(cy-8)+'" font-size="10" fill="'+C.amber+'" text-anchor="middle">'+r.codeCount+'</text>';
+    });
+    svg += '</svg>';
+
+    var legend = '<div style="display:flex; gap:18px; align-items:center; margin-top:6px; font-size:12px; color:'+C.soft+';">' +
+      '<span style="display:flex; align-items:center; gap:6px;"><span style="width:12px; height:12px; background:'+C.brand+'; border-radius:2px; display:inline-block;"></span>Fault count</span>' +
+      '<span style="display:flex; align-items:center; gap:6px;"><span style="width:16px; height:2px; background:'+C.amber+'; display:inline-block;"></span>Distinct fault codes</span>' +
+      '<span style="margin-left:auto;">Click a bar to open that vehicle</span>' +
+    '</div>';
+
+    faultsEl.innerHTML =
+      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; box-shadow:'+C.shadow+';">' +
+        '<div style="font-size:15px; font-weight:650; color:'+C.ink+'; margin-bottom:4px;">Active Engine Faults</div>' +
+        '<div style="font-size:12.5px; color:'+C.soft+'; margin-bottom:12px;">'+rows.length+' vehicle(s) with active faults, highest first.</div>' +
+        '<div style="overflow-x:auto;">'+svg+'</div>' +
+        legend +
+      '</div>';
+
+    // click a bar → switch to Fleet Health, expand that vehicle
+    faultsEl.querySelectorAll('[data-fdev]').forEach(function (bar) {
+      bar.addEventListener("click", function () {
+        expandedAsset = bar.getAttribute("data-fdev");
+        switchTab("health");
+        renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
+        var el = document.getElementById("asset-"+cssId(expandedAsset));
+        if (el && el.scrollIntoView) el.scrollIntoView({ behavior:"smooth", block:"center" });
+      });
+    });
+  }
+
   // ---- theme + tabs --------------------------------------------------
   function $(id) { return document.getElementById(id); }
   function applyTheme() {
@@ -950,6 +1122,8 @@ geotab.addin.jackMaintenance = function () {
     }
     var rb = $("refreshBtn");
     if (rb) { rb.style.background = C.card; rb.style.border = "1px solid "+C.line; rb.style.color = C.brand; }
+    var gs = $("groupSelect");
+    if (gs) { gs.style.background = C.card; gs.style.border = "1px solid "+C.line; gs.style.color = C.ink; }
     var tabsWrap = $("tabs");
     if (tabsWrap) tabsWrap.style.borderBottom = "1px solid "+C.line;
     styleTabs();
@@ -957,7 +1131,8 @@ geotab.addin.jackMaintenance = function () {
   function styleTabs() {
     if (!healthEl) return;
     var active = "health";
-    if (oilEl && oilEl.style.display!=="none") active = "oil";
+    if (faultsEl && faultsEl.style.display!=="none") active = "faults";
+    else if (oilEl && oilEl.style.display!=="none") active = "oil";
     else if (customEl && customEl.style.display!=="none") active = "custom";
     else if (healthEl.style.display!=="none") active = "health";
     document.querySelectorAll("#tabs button").forEach(function (b) {
@@ -968,27 +1143,39 @@ geotab.addin.jackMaintenance = function () {
   }
   function switchTab(name) {
     if (healthEl) healthEl.style.display = name==="health"?"":"none";
+    if (faultsEl) faultsEl.style.display = name==="faults"?"":"none";
     if (oilEl) oilEl.style.display = name==="oil"?"":"none";
     if (customEl) customEl.style.display = name==="custom"?"":"none";
     styleTabs();
   }
 
   // ---- orchestration -------------------------------------------------
-  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{}, sensorMap:{}, customList:[] };
+  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{}, sensorMap:{}, customList:[], allDevices:[] };
   function safe(p, fallback) { return Promise.resolve().then(function(){ return p; }).then(function (v){ return v; }).catch(function (e){ console.warn("call failed:", e&&e.message); return fallback; }); }
+
+  function renderAll() {
+    // apply group filter to the loaded device set, then render every tab
+    var devices = filterByGroup(cache.allDevices);
+    cache.devices = devices;
+    renderHealth(devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
+    if (faultsEl) renderFaults(devices, cache.faultMap);
+    if (oilEl) renderOil(devices, cache.odoMap, cache.oilMap, cache.sensorMap);
+    if (customEl) renderCustom(devices, cache.odoMap, cache.customList);
+  }
+
   function reloadAll() {
     if (!healthEl) return;
     healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Loading fleet…</div>';
-    safe(getDevices(), []).then(function (devices) {
-      cache.devices = devices;
+    Promise.all([ safe(getDevices(), []), safe(getGroups(), []) ]).then(function (r) {
+      cache.allDevices = r[0];
+      populateGroupSelect();
+      var devices = cache.allDevices; // load data for ALL devices; filter at render time
       return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]) ]);
     }).then(function (res) {
       cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4];
       return safe(resolveDiagnostics(cache.faultMap), undefined);
     }).then(function () {
-      renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
-      if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
-      if (customEl) renderCustom(cache.devices, cache.odoMap, cache.customList);
+      renderAll();
     }).catch(function (err) {
       if (healthEl) healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Couldn\u2019t load data: '+(err&&err.message?err.message:err)+'</div>';
     });
@@ -1002,15 +1189,17 @@ geotab.addin.jackMaintenance = function () {
         api = freshApi;
         bodyEl = document.getElementById("body"); rootEl = document.getElementById("root");
         healthEl = document.getElementById("health"); oilEl = document.getElementById("oil");
-        customEl = document.getElementById("custom");
+        customEl = document.getElementById("custom"); faultsEl = document.getElementById("faults");
+        groupSelectEl = document.getElementById("groupSelect");
         toastEl = document.getElementById("toast");
         var rb = $("refreshBtn"); if (rb) rb.addEventListener("click", reloadAll);
         var tb = $("themeBtn");
         if (tb) tb.addEventListener("click", function () {
-          theme = theme==="dark"?"light":"dark"; applyTheme();
-          renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
-          if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
-          if (customEl) renderCustom(cache.devices, cache.odoMap, cache.customList);
+          theme = theme==="dark"?"light":"dark"; applyTheme(); renderAll();
+        });
+        if (groupSelectEl) groupSelectEl.addEventListener("change", function () {
+          selectedGroupId = groupSelectEl.value || null;
+          renderAll();
         });
         document.querySelectorAll("#tabs button").forEach(function (b) {
           b.addEventListener("click", function () { switchTab(b.getAttribute("data-tab")); });
