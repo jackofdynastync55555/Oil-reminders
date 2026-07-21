@@ -176,6 +176,30 @@ async function sendDigest(label, emailTo, dueVehicles) {
   console.log(`  Digest sent to ${emailTo} (${dueVehicles.length} vehicles)`);
 }
 
+async function sendServicedConfirmation(label, emailTo, servicedVehicles) {
+  const lines = servicedVehicles.map(
+    (v) => `\u2022 ${v.name} — marked serviced at ${Math.round(v.atUnits).toLocaleString()} ${UNITS}`
+  );
+  const body = [
+    `The following vehicle(s) were marked as serviced and their oil change`,
+    `counters were reset:`,
+    ``,
+    ...lines,
+    ``,
+    `The next reminder for each will be sent after it travels its interval again.`,
+    ``,
+    `— Automated confirmation from Dynasty Communications fleet monitoring`,
+  ].join("\n");
+
+  await transporter.sendMail({
+    from: EMAIL_FROM,
+    to: emailTo,
+    subject: `Oil change reset confirmed: ${servicedVehicles.length} vehicle(s)${label ? " — " + label : ""}`,
+    text: body,
+  });
+  console.log(`  Serviced-confirmation sent to ${emailTo} (${servicedVehicles.length} vehicles)`);
+}
+
 // ---------------------------------------------------------------------------
 // Process ONE database
 // ---------------------------------------------------------------------------
@@ -194,6 +218,7 @@ async function processAccount(account) {
   console.log(`  Checking ${devices.length} vehicle(s)…`);
 
   const due = [];
+  const serviced = []; // vehicles flagged 'Mark serviced now' in the Add-In
 
   for (const device of devices) {
     const odoMeters = await getOdometerMeters(client, device.id);
@@ -246,6 +271,31 @@ async function processAccount(account) {
     } else {
       const remaining = (intervalMeters - sinceLast) / METERS_PER_UNIT;
       console.log(`    ${device.name}: ${remaining.toFixed(0)} ${UNITS} until next reminder`);
+    }
+  }
+
+  // Handle "Mark serviced now" confirmations flagged in the Add-In
+  for (const [deviceId, entry] of state.entries()) {
+    const d = entry.details;
+    if (d && d.emailPending) {
+      serviced.push({
+        name: d.deviceName || deviceId,
+        atUnits: (d.emailPendingOdoMeters != null ? d.emailPendingOdoMeters : d.lastNotifiedMeters) / METERS_PER_UNIT,
+      });
+      // Clear the flag so it only emails once
+      const cleared = { ...d };
+      delete cleared.emailPending;
+      delete cleared.emailPendingReason;
+      delete cleared.emailPendingOdoMeters;
+      await saveState(client, entry, cleared);
+    }
+  }
+
+  if (serviced.length > 0) {
+    if (account.emailTo) {
+      await sendServicedConfirmation(label, account.emailTo, serviced);
+    } else {
+      console.log(`  ${serviced.length} serviced confirmation(s) pending but no email set`);
     }
   }
 
