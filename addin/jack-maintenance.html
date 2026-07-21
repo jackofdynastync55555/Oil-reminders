@@ -156,10 +156,10 @@ geotab.addin.jackMaintenance = function () {
     return "generic";
   }
   function getSensors(devices) {
-    var from = daysAgo(2), to = new Date().toISOString();
+    var from = daysAgo(7), to = new Date().toISOString();
     // Pull the recent StatusData window per device (all diagnostics), then classify by name.
     var calls = devices.map(function (d) {
-      return ["Get", { typeName:"StatusData", resultsLimit: 200, search:{
+      return ["Get", { typeName:"StatusData", resultsLimit: 500, search:{
         deviceSearch:{id:d.id}, fromDate:from, toDate:to
       }}];
     });
@@ -194,11 +194,12 @@ geotab.addin.jackMaintenance = function () {
             var when = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
             if (!latest[id] || when > latest[id].when) latest[id] = { value: sd.data, when: when };
           });
-          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null };
+          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, _raw:[] };
           Object.keys(latest).forEach(function (id) {
             var meta = diagMetaCache[id] || { name:id };
             var nm = (meta.name||"").toLowerCase();
             var val = latest[id].value;
+            info._raw.push({ name: meta.name || id, value: val }); // for debug
             var corner = classifyTireCorner(meta.name||"");
             if (corner) {
               // Geotab reports tire pressure already in PSI for this fleet (verified in Asset > Maintenance)
@@ -212,13 +213,18 @@ geotab.addin.jackMaintenance = function () {
             } else if (/battery|voltage/.test(nm)) {
               info.battery = val; // volts
             } else if (/coolant/.test(nm)) {
-              // coolant temp may arrive in C; convert if it looks metric (< 90 while engine warm is ambiguous, so store raw + flag)
-              info.coolant = val; // display handles unit
+              info.coolant = val; // unit handled at display/threshold
             } else if (/engine hour/.test(nm)) {
               info.engineHours = val;
             }
           });
           out[did] = info;
+          // DEBUG: log every diagnostic name+value this device reported so we can tune matching
+          if (info._raw.length) {
+            console.log("SENSORS ["+ (devices[i].name||did) +"]:", info._raw.map(function(r){ return r.name+"="+r.value; }).join(" | "));
+          } else {
+            console.log("SENSORS ["+ (devices[i].name||did) +"]: (no status data in window)");
+          }
         });
         return out;
       });
@@ -300,6 +306,26 @@ geotab.addin.jackMaintenance = function () {
       else sys.other += w;
     });
     return sys;
+  }
+
+  // Shop-style recommended action based on the fault's diagnostic name + severity.
+  function recommendedAction(name, severity) {
+    var n = (name || "").toLowerCase();
+    var urgent = severity === "critical";
+    if (/tire|tyre|tpms|pressure/.test(n)) return "Check tire pressures and inspect for leaks or damage.";
+    if (/brak|abs/.test(n)) return urgent ? "Inspect brake system immediately — do not operate until checked." : "Inspect brake pads, lines, and ABS sensors.";
+    if (/coolant|overheat|temp/.test(n)) return urgent ? "Stop and let engine cool — check coolant level, thermostat, and radiator." : "Check coolant level and thermostat.";
+    if (/oil pressure|oil press/.test(n)) return "Stop engine — check oil level and oil pressure sender.";
+    if (/misfire|cylinder/.test(n)) return "Inspect spark plugs, coils, and injectors for the affected cylinder.";
+    if (/dpf|soot|particulate/.test(n)) return "Perform DPF regeneration; inspect for excessive soot loading.";
+    if (/def|scr|nox|urea/.test(n)) return "Check DEF level and quality; inspect SCR/NOx sensors.";
+    if (/egr/.test(n)) return "Inspect EGR valve and cooler for sticking or clogging.";
+    if (/o2|oxygen|fuel trim|maf|map/.test(n)) return "Check for vacuum leaks; inspect O2/MAF sensors and fuel trims.";
+    if (/battery|voltage|charg|alternat/.test(n)) return urgent ? "Charging fault — test alternator and battery before next start." : "Test battery and charging system.";
+    if (/trans|gear|clutch|shift/.test(n)) return urgent ? "Transmission fault — check fluid and scan trans module before driving." : "Check transmission fluid level and condition.";
+    if (/iox|communication|opcode|reset|device/.test(n)) return "Telematics/device fault — verify harness seating; report to reseller if it persists.";
+    if (/lamp|light|bulb/.test(n)) return "Inspect and replace the affected lamp/bulb.";
+    return urgent ? "Diagnose with a scan tool and service promptly." : "Schedule an inspection to diagnose.";
   }
 
   // ---- health scoring ------------------------------------------------
@@ -448,27 +474,10 @@ geotab.addin.jackMaintenance = function () {
   function detailPanel(device, h, sensors) {
     var sys = systemsFromFaults(h.faults);
     var carSvg = carDiagram(h.level, sys, sensors);
-    var faultList = "";
-    if (h.faults && h.faults.items.length) {
-      faultList = h.faults.items.map(function (it) {
-        var c = it.severity==="critical"?C.red:C.amber;
-        var bg = it.severity==="critical"?C.redBg:C.amberBg;
-        var name = diagNameCache[it.diagId] || it.code || "Unknown fault";
-        var when = it.first ? new Date(it.first).toLocaleDateString() : "";
-        return '<div style="display:flex; align-items:center; gap:10px; padding:9px 0; border-top:1px solid '+C.line+';">' +
-          dot(c) +
-          '<div style="flex:1;"><div style="font-size:13px; color:'+C.ink+'; font-weight:600;">'+esc(name)+'</div>' +
-          '<div style="font-size:11.5px; color:'+C.soft+';">'+esc(it.code)+(when?" · first seen "+when:"")+'</div></div>' +
-          pill(it.severity, bg, c) +
-        '</div>';
-      }).join("");
-    } else {
-      faultList = '<div style="font-size:13px; color:'+C.soft+'; padding:10px 0;">No active fault codes.</div>';
-    }
 
-    // Readout rows: fuel, RPM, oil
+    // Readout rows (now shown UNDER the car on the left)
     function readRow(label, valueHtml) {
-      return '<div style="display:flex; justify-content:space-between; font-size:12.5px; color:'+C.soft+'; padding:8px 0; border-top:1px solid '+C.line+';">' +
+      return '<div style="display:flex; justify-content:space-between; font-size:12.5px; color:'+C.soft+'; padding:7px 0; border-top:1px solid '+C.line+';">' +
         '<span>'+label+'</span>'+valueHtml+'</div>';
     }
     var rows = "";
@@ -499,13 +508,56 @@ geotab.addin.jackMaintenance = function () {
       rows += readRow("Oil change", '<span style="color:'+oc+'; font-weight:600;">' +
         (h.oil.remaining<=0 ? "Overdue by "+fmt(-h.oil.remaining)+" "+UNITS : fmt(h.oil.remaining)+" "+UNITS+" remaining")+'</span>');
     }
+    var sensorBlock = rows
+      ? '<div style="margin-top:10px;"><div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:2px;">Readings</div>'+rows+'</div>'
+      : '';
+
+    // ---- faults: STACK duplicates by name, show count + latest date ----
+    var faultList = "";
+    if (h.faults && h.faults.items.length) {
+      var groups = {};
+      h.faults.items.forEach(function (it) {
+        var name = diagNameCache[it.diagId] || it.code || "Unknown fault";
+        var key = name + "|" + it.severity;
+        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, count:0, latest:null };
+        groups[key].count++;
+        var t = it.first ? new Date(it.first).getTime() : 0;
+        if (t && (!groups[key].latest || t > groups[key].latest)) groups[key].latest = t;
+      });
+      // critical first, then by count
+      var arr = Object.keys(groups).map(function (k){ return groups[k]; });
+      arr.sort(function (a,b){
+        if ((a.severity==="critical")!==(b.severity==="critical")) return a.severity==="critical"?-1:1;
+        return b.count - a.count;
+      });
+      faultList = arr.map(function (g) {
+        var c = g.severity==="critical"?C.red:C.amber;
+        var bg = g.severity==="critical"?C.redBg:C.amberBg;
+        var when = g.latest ? new Date(g.latest).toLocaleDateString() : "";
+        var countBadge = g.count>1 ? ' <span style="font-size:11px; color:'+C.faint+';">\u00d7'+g.count+'</span>' : '';
+        var action = recommendedAction(g.name, g.severity);
+        return '<div style="padding:10px 0; border-top:1px solid '+C.line+';">' +
+          '<div style="display:flex; align-items:center; gap:10px;">' +
+            dot(c) +
+            '<div style="flex:1;"><div style="font-size:13px; color:'+C.ink+'; font-weight:600;">'+esc(g.name)+countBadge+'</div>' +
+            '<div style="font-size:11.5px; color:'+C.soft+';">'+esc(g.code)+(when?" · latest "+when:"")+(g.count>1?" · "+g.count+" occurrences":"")+'</div></div>' +
+            pill(g.severity, bg, c) +
+          '</div>' +
+          '<div style="margin-left:21px; margin-top:5px; font-size:12px; color:'+C.soft+'; border-left:2px solid '+c+'; padding-left:9px;">' +
+            '<span style="color:'+c+'; font-weight:600;">Recommended: </span>'+esc(action) +
+          '</div>' +
+        '</div>';
+      }).join("");
+    } else {
+      faultList = '<div style="font-size:13px; color:'+C.soft+'; padding:10px 0;">No active fault codes.</div>';
+    }
 
     return '<div style="padding:4px 16px 16px; background:'+C.card2+'; border-top:1px solid '+C.line+';">' +
       '<div style="display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start;">' +
-        '<div style="flex:0 0 auto; width:210px; max-width:100%;">'+carSvg+'</div>' +
-        '<div style="flex:1; min-width:220px;">' +
-          '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:12px 0 4px;">Active faults</div>' +
-          faultList + rows +
+        '<div style="flex:0 0 auto; width:210px; max-width:100%;">'+carSvg+sensorBlock+'</div>' +
+        '<div style="flex:1; min-width:240px;">' +
+          '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:12px 0 2px;">Active faults &amp; recommendations</div>' +
+          faultList +
         '</div>' +
       '</div>' +
     '</div>';
