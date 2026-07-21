@@ -21,10 +21,12 @@
   <div id="tabs" style="display:flex; gap:4px; margin-bottom:20px;">
     <button data-tab="health" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Fleet Health</button>
     <button data-tab="oil" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Oil Reminders</button>
+    <button data-tab="custom" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Custom Reminders</button>
   </div>
 
   <div id="health"></div>
   <div id="oil" style="display:none;"></div>
+  <div id="custom" style="display:none;"></div>
 </div>
 <div id="toast" style="position:fixed; bottom:22px; left:50%; transform:translateX(-50%) translateY(10px); padding:10px 20px; border-radius:10px; font-size:13px; font-weight:500; opacity:0; pointer-events:none; transition:opacity .22s, transform .22s; z-index:99;"></div>
 
@@ -32,6 +34,7 @@
 "use strict";
 
 var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
+var CUSTOM_ADD_IN_ID = "aWI4NTRlNjItNzc5Ny1jdXN0"; // separate store for custom reminders
 var DEFAULT_INTERVAL_MILES = 10000;
 var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
@@ -56,7 +59,7 @@ var theme = "dark";
 var C = THEMES[theme];
 
 geotab.addin.jackMaintenance = function () {
-  var api, toastEl, healthEl, oilEl, bodyEl, rootEl;
+  var api, toastEl, healthEl, oilEl, customEl, bodyEl, rootEl;
   var expandedAsset = null; // device id whose detail panel is open
 
   // ---- utils ---------------------------------------------------------
@@ -107,6 +110,14 @@ geotab.addin.jackMaintenance = function () {
       });
       return by;
     });
+  }
+  function getCustom() {
+    return apiCall("Get", { typeName: "AddInData", search: { addInId: CUSTOM_ADD_IN_ID } }).then(function (recs) {
+      return recs.map(function (r) {
+        var det = typeof r.details === "string" ? JSON.parse(r.details) : r.details;
+        return { id: r.id, details: det };
+      }).filter(function (x){ return x.details && x.details.deviceId; });
+    }).catch(function(){ return []; });
   }
   function getOdometers(devices) {
     var now = new Date().toISOString();
@@ -578,6 +589,21 @@ geotab.addin.jackMaintenance = function () {
       else if (remaining<=0){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; counts.due++; }
       else if (pct>=85){ pillHtml=pill("Due soon \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.amberBg,C.amber); fill=C.amber; counts.soon++; }
       else { pillHtml=pill("On track \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.greenBg,C.green); fill=C.brand; counts.ok++; }
+      var histHtml = "";
+      var hist = (det.history || []).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
+      if (hist.length) {
+        histHtml = '<div style="margin-top:14px; padding-top:14px; border-top:1px solid '+C.line+';">' +
+          '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:6px;">Service history</div>' +
+          hist.map(function (e) {
+            var mi = e.odoMeters!=null ? fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS : "—";
+            var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
+            var src = e.source==="auto" ? "auto-reset" : "marked serviced";
+            return '<div style="display:flex; justify-content:space-between; font-size:12.5px; color:'+C.soft+'; padding:4px 0;">' +
+              '<span>'+dt+' \u00b7 '+src+'</span><span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span></div>';
+          }).join("") +
+        '</div>';
+      }
+
       var card = document.createElement("div");
       card.style.cssText = "background:"+C.card+"; border:1px solid "+C.line+"; border-radius:12px; padding:16px 18px; margin-bottom:12px; box-shadow:"+C.shadow+";";
       card.innerHTML =
@@ -594,7 +620,8 @@ geotab.addin.jackMaintenance = function () {
           '<span style="flex:1;"></span>' +
           '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
           '<button data-act="save" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
-        '</div>';
+        '</div>' +
+        histHtml;
       var intervalInput = card.querySelector('input[type="number"]');
       var enabledInput = card.querySelector('input[type="checkbox"]');
       card.querySelector('[data-act="save"]').addEventListener("click", function () {
@@ -605,6 +632,9 @@ geotab.addin.jackMaintenance = function () {
       card.querySelector('[data-act="reset"]').addEventListener("click", function () {
         det.lastNotifiedMeters = odoMeters; det.lastNotifiedDate = new Date().toISOString(); det.deviceName = device.name;
         det.emailPending = true; det.emailPendingReason = "serviced"; det.emailPendingOdoMeters = odoMeters;
+        // Record to service history
+        if (!det.history) det.history = [];
+        det.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "manual" });
         persistOil(rec, det, device, oilMap).then(function () { toast(device.name+" marked serviced — confirmation queued"); reloadAll(); });
       });
       frag.appendChild(card);
@@ -623,6 +653,149 @@ geotab.addin.jackMaintenance = function () {
       if (!rec) rec = { id:newId, details:det }; else rec.details = det; oilMap[device.id] = rec;
     });
   }
+
+  // ---- CUSTOM REMINDERS tab ------------------------------------------
+  function persistCustom(rec) {
+    var entity = { addInId:CUSTOM_ADD_IN_ID, groups:[{id:"GroupCompanyId"}], details:rec.details };
+    var method = rec.id ? "Set" : "Add"; if (rec.id) entity.id = rec.id;
+    return apiCall(method, { typeName:"AddInData", entity:entity }).then(function (newId) {
+      if (!rec.id) rec.id = newId; return rec;
+    });
+  }
+  function deleteCustom(rec) {
+    if (!rec.id) return Promise.resolve();
+    return apiCall("Remove", { typeName:"AddInData", entity:{ id:rec.id, addInId:CUSTOM_ADD_IN_ID } });
+  }
+
+  function renderCustom(devices, odoMap, customList) {
+    if (!customEl) return;
+    customList = customList || [];
+    var odoByDevice = odoMap || {};
+    var nameById = {}; devices.forEach(function (d){ nameById[d.id] = d.name; });
+
+    // ---- add form ----
+    var deviceOpts = devices.map(function (d) {
+      return '<option value="'+esc(d.id)+'">'+esc(d.name)+'</option>';
+    }).join("");
+
+    var form =
+      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; margin-bottom:18px; box-shadow:'+C.shadow+';">' +
+        '<div style="font-size:14px; font-weight:650; color:'+C.ink+'; margin-bottom:12px;">Add a custom reminder</div>' +
+        '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">' +
+          '<label style="font-size:12px; color:'+C.soft+';">Asset<br><select id="cr-device" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;">'+deviceOpts+'</select></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Reminder name<br><input id="cr-label" type="text" placeholder="e.g. DOT inspection" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;"></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Type<br><select id="cr-type" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="mi">Every X miles</option><option value="days">Every X days</option></select></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Interval<br><input id="cr-interval" type="number" min="1" value="5000" style="margin-top:4px; width:100px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Email to<br><input id="cr-email" type="text" placeholder="optional" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:150px;"></label>' +
+          '<button id="cr-add" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Add reminder</button>' +
+        '</div>' +
+      '</div>';
+
+    // ---- existing reminders ----
+    var listHtml = "";
+    if (!customList.length) {
+      listHtml = '<div style="text-align:center; color:'+C.soft+'; padding:30px 20px;">No custom reminders yet. Add one above.</div>';
+    } else {
+      customList.forEach(function (rec) {
+        var d = rec.details;
+        var unit = d.type === "days" ? "days" : UNITS;
+        var progress, remaining, pct;
+        if (d.type === "days") {
+          var start = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
+          var elapsed = (Date.now() - start) / 86400000;
+          progress = elapsed; remaining = d.interval - elapsed;
+          pct = Math.max(0, Math.min(100, (elapsed / d.interval) * 100));
+        } else {
+          var odo = odoByDevice[d.deviceId];
+          var since = odo!=null && d.baselineMeters!=null ? (odo - d.baselineMeters)/METERS_PER_UNIT : 0;
+          progress = since; remaining = d.interval - since;
+          pct = Math.max(0, Math.min(100, (since / d.interval) * 100));
+        }
+        var pillHtml, fill;
+        if (d.enabled===false){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
+        else if (remaining<=0){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
+        else if (pct>=85){ pillHtml=pill("Due soon",C.amberBg,C.amber); fill=C.amber; }
+        else { pillHtml=pill(fmt(Math.max(0,remaining))+" "+unit+" left",C.greenBg,C.green); fill=C.brand; }
+
+        var histHtml = "";
+        var hist = (d.history||[]).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
+        if (hist.length) {
+          histHtml = '<div style="margin-top:12px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+            '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:5px;">History</div>' +
+            hist.map(function (e){
+              var val = d.type==="days" ? (e.date?new Date(e.date).toLocaleDateString():"") : (e.odoMeters!=null?fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS:"—");
+              var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
+              return '<div style="display:flex; justify-content:space-between; font-size:12px; color:'+C.soft+'; padding:3px 0;"><span>'+dt+'</span><span style="color:'+C.ink+';">'+val+'</span></div>';
+            }).join("") + '</div>';
+        }
+
+        var card = '<div data-crid="'+esc(rec.id)+'" style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; margin-bottom:12px; box-shadow:'+C.shadow+';">' +
+          '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px;">' +
+            '<div><span style="font-size:15px; font-weight:650; color:'+C.ink+';">'+esc(d.label||"Reminder")+'</span>' +
+            '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+esc(d.deviceName||nameById[d.deviceId]||"")+' \u00b7 every '+fmt(d.interval)+' '+unit+'</div></div>' +
+            pillHtml +
+          '</div>' +
+          '<div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;"><div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
+          '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+            '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" data-cr="enabled" '+(d.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> On</label>' +
+            '<span style="flex:1;"></span>' +
+            '<button data-cr="complete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Mark done</button>' +
+            '<button data-cr="delete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Delete</button>' +
+          '</div>' +
+          histHtml +
+        '</div>';
+        listHtml += card;
+      });
+    }
+
+    customEl.innerHTML = form + '<div id="cr-list">' + listHtml + '</div>';
+
+    // wire add form
+    var addBtn = $("cr-add");
+    if (addBtn) addBtn.addEventListener("click", function () {
+      var deviceId = $("cr-device").value;
+      var label = ($("cr-label").value || "").trim() || "Reminder";
+      var type = $("cr-type").value;
+      var interval = Number($("cr-interval").value) || 0;
+      var email = ($("cr-email").value || "").trim();
+      if (!deviceId || interval <= 0) { toast("Pick an asset and a valid interval"); return; }
+      var det = {
+        deviceId: deviceId, deviceName: nameById[deviceId] || "",
+        label: label, type: type, interval: interval,
+        baselineMeters: type==="mi" ? (odoByDevice[deviceId]||0) : null,
+        baselineDate: new Date().toISOString(),
+        enabled: true, emailTo: email || null, emailPending: false, history: []
+      };
+      persistCustom({ id:null, details:det }).then(function () { toast("Reminder added"); reloadAll(); });
+    });
+
+    // wire per-card actions
+    customList.forEach(function (rec) {
+      var cardEl = customEl.querySelector('[data-crid="'+cssIdSel(rec.id)+'"]');
+      if (!cardEl) return;
+      var enabledCb = cardEl.querySelector('[data-cr="enabled"]');
+      var completeBtn = cardEl.querySelector('[data-cr="complete"]');
+      var deleteBtn = cardEl.querySelector('[data-cr="delete"]');
+      if (enabledCb) enabledCb.addEventListener("change", function () {
+        rec.details.enabled = enabledCb.checked;
+        persistCustom(rec).then(function () { toast("Updated"); });
+      });
+      if (completeBtn) completeBtn.addEventListener("click", function () {
+        var d = rec.details;
+        if (!d.history) d.history = [];
+        var odo = odoByDevice[d.deviceId];
+        d.history.push({ date: new Date().toISOString(), odoMeters: d.type==="mi" ? odo : null });
+        if (d.type==="mi") d.baselineMeters = odo!=null ? odo : d.baselineMeters;
+        d.baselineDate = new Date().toISOString();
+        d.emailPending = true;
+        persistCustom(rec).then(function () { toast(d.label+" marked done"); reloadAll(); });
+      });
+      if (deleteBtn) deleteBtn.addEventListener("click", function () {
+        deleteCustom(rec).then(function () { toast("Reminder deleted"); reloadAll(); });
+      });
+    });
+  }
+  function cssIdSel(s) { return String(s).replace(/["\\]/g,"\\$&"); }
 
   // ---- theme + tabs --------------------------------------------------
   function $(id) { return document.getElementById(id); }
@@ -643,7 +816,10 @@ geotab.addin.jackMaintenance = function () {
   }
   function styleTabs() {
     if (!healthEl) return;
-    var active = healthEl.style.display!=="none" ? "health" : "oil";
+    var active = "health";
+    if (oilEl && oilEl.style.display!=="none") active = "oil";
+    else if (customEl && customEl.style.display!=="none") active = "custom";
+    else if (healthEl.style.display!=="none") active = "health";
     document.querySelectorAll("#tabs button").forEach(function (b) {
       var on = b.getAttribute("data-tab")===active;
       b.style.borderBottom = on ? "2px solid "+C.brand : "2px solid transparent";
@@ -653,24 +829,26 @@ geotab.addin.jackMaintenance = function () {
   function switchTab(name) {
     if (healthEl) healthEl.style.display = name==="health"?"":"none";
     if (oilEl) oilEl.style.display = name==="oil"?"":"none";
+    if (customEl) customEl.style.display = name==="custom"?"":"none";
     styleTabs();
   }
 
   // ---- orchestration -------------------------------------------------
-  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{}, sensorMap:{} };
+  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{}, sensorMap:{}, customList:[] };
   function safe(p, fallback) { return Promise.resolve().then(function(){ return p; }).then(function (v){ return v; }).catch(function (e){ console.warn("call failed:", e&&e.message); return fallback; }); }
   function reloadAll() {
     if (!healthEl) return;
     healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Loading fleet…</div>';
     safe(getDevices(), []).then(function (devices) {
       cache.devices = devices;
-      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}) ]);
+      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]) ]);
     }).then(function (res) {
-      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3];
+      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4];
       return safe(resolveDiagnostics(cache.faultMap), undefined);
     }).then(function () {
       renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
       if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
+      if (customEl) renderCustom(cache.devices, cache.odoMap, cache.customList);
     }).catch(function (err) {
       if (healthEl) healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Couldn\u2019t load data: '+(err&&err.message?err.message:err)+'</div>';
     });
@@ -684,6 +862,7 @@ geotab.addin.jackMaintenance = function () {
         api = freshApi;
         bodyEl = document.getElementById("body"); rootEl = document.getElementById("root");
         healthEl = document.getElementById("health"); oilEl = document.getElementById("oil");
+        customEl = document.getElementById("custom");
         toastEl = document.getElementById("toast");
         var rb = $("refreshBtn"); if (rb) rb.addEventListener("click", reloadAll);
         var tb = $("themeBtn");
@@ -691,6 +870,7 @@ geotab.addin.jackMaintenance = function () {
           theme = theme==="dark"?"light":"dark"; applyTheme();
           renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
           if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
+          if (customEl) renderCustom(cache.devices, cache.odoMap, cache.customList);
         });
         document.querySelectorAll("#tabs button").forEach(function (b) {
           b.addEventListener("click", function () { switchTab(b.getAttribute("data-tab")); });
