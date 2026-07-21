@@ -234,8 +234,10 @@ async function processAccount(account) {
   ]);
   console.log(`  Checking ${devices.length} vehicle(s)…`);
 
-  const due = [];
-  const serviced = []; // vehicles flagged 'Mark serviced now' in the Add-In
+  const dueDigest = [];     // reached interval — auto-reset + unconfirmed warning
+  const upcoming500 = [];   // 500 mi out
+  const upcoming100 = [];   // 100 mi out
+  const serviced = [];      // vehicles flagged 'Mark serviced now' in the Add-In
   const odometerByDevice = {}; // for custom distance reminders
 
   for (const device of devices) {
@@ -276,20 +278,40 @@ async function processAccount(account) {
     const intervalMeters =
       (details.intervalMiles || account.intervalMiles) * METERS_PER_UNIT;
     const sinceLast = odoMeters - details.lastNotifiedMeters;
+    const remainingMeters = intervalMeters - sinceLast;
+    const remainingUnits = remainingMeters / METERS_PER_UNIT;
+
+    const STAGE_500 = 500 * METERS_PER_UNIT;
+    const STAGE_100 = 100 * METERS_PER_UNIT;
+    if (!details.stagesSent) details.stagesSent = {}; // { s500, s100 }
 
     if (sinceLast >= intervalMeters) {
-      due.push({
+      // Due: auto-reset + "may not have been serviced" warning
+      dueDigest.push({
         name: device.name,
         currentUnits: odoMeters / METERS_PER_UNIT,
         sinceLastUnits: sinceLast / METERS_PER_UNIT,
+        intervalUnits: intervalMeters / METERS_PER_UNIT,
       });
       details.lastNotifiedMeters = odoMeters;
       details.lastNotifiedDate = new Date().toISOString();
+      details.stagesSent = {}; // reset stage flags for the new cycle
+      if (!details.history) details.history = [];
+      details.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "auto" });
       await saveState(client, existing, details);
-      console.log(`    ${device.name}: DUE — counter reset`);
+      console.log(`    ${device.name}: DUE — auto-reset (service not confirmed)`);
+    } else if (remainingMeters <= STAGE_100 && !details.stagesSent.s100) {
+      upcoming100.push({ name: device.name, remainingUnits: remainingUnits });
+      details.stagesSent.s100 = true;
+      await saveState(client, existing, details);
+      console.log(`    ${device.name}: 100-${UNITS} reminder sent`);
+    } else if (remainingMeters <= STAGE_500 && !details.stagesSent.s500) {
+      upcoming500.push({ name: device.name, remainingUnits: remainingUnits });
+      details.stagesSent.s500 = true;
+      await saveState(client, existing, details);
+      console.log(`    ${device.name}: 500-${UNITS} reminder sent`);
     } else {
-      const remaining = (intervalMeters - sinceLast) / METERS_PER_UNIT;
-      console.log(`    ${device.name}: ${remaining.toFixed(0)} ${UNITS} until next reminder`);
+      console.log(`    ${device.name}: ${remainingUnits.toFixed(0)} ${UNITS} until due`);
     }
   }
 
@@ -318,14 +340,14 @@ async function processAccount(account) {
     }
   }
 
-  if (due.length > 0) {
-    if (account.emailTo) {
-      await sendDigest(label, account.emailTo, due);
-    } else {
-      console.log(`  ${due.length} vehicle(s) due but no DB email set — skipping email`);
-    }
-  } else {
-    console.log(`  No vehicles due. No email sent.`);
+  const to = account.emailTo;
+  if (to) {
+    if (upcoming500.length > 0) await sendStageEmail(label, to, "500", upcoming500);
+    if (upcoming100.length > 0) await sendStageEmail(label, to, "100", upcoming100);
+    if (dueDigest.length > 0) await sendDueEmail(label, to, dueDigest);
+  }
+  if (!upcoming500.length && !upcoming100.length && !dueDigest.length) {
+    console.log(`  No oil reminders due this run.`);
   }
 
   // ---- Custom reminders (distance or time) --------------------------
@@ -334,6 +356,51 @@ async function processAccount(account) {
   } catch (e) {
     console.error(`  Custom reminders error on ${label}: ${e.message}`);
   }
+}
+
+// 500/100 upcoming reminder email
+async function sendStageEmail(label, to, stage, vehicles) {
+  const lines = vehicles.map(
+    (v) => `\u2022 ${v.name} — ${Math.round(v.remainingUnits)} ${UNITS} until oil change due`
+  );
+  const heading = stage === "500"
+    ? `Oil service coming up (within 500 ${UNITS}):`
+    : `Oil service due soon (within 100 ${UNITS}):`;
+  const body = [heading, ``, ...lines, ``,
+    `This is an advance reminder — no action needed in Geotab.`,
+    `The system will track these automatically.`,
+    ``, `— Automated reminder from Dynasty Communications fleet monitoring`].join("\n");
+  await transporter.sendMail({
+    from: EMAIL_FROM, to,
+    subject: `Oil service ${stage === "500" ? "coming up" : "due soon"}: ${vehicles.length} vehicle(s)${label ? " — " + label : ""}`,
+    text: body,
+  });
+  console.log(`  ${stage}-${UNITS} reminder email sent to ${to} (${vehicles.length})`);
+}
+
+// At-interval email: auto-reset happened, but service is NOT confirmed
+async function sendDueEmail(label, to, vehicles) {
+  const lines = vehicles.map(
+    (v) => `\u2022 ${v.name} — reached ${Math.round(v.intervalUnits).toLocaleString()} ${UNITS} interval at ${Math.round(v.currentUnits).toLocaleString()} ${UNITS}`
+  );
+  const body = [
+    `The following vehicle(s) have reached their oil change interval and the`,
+    `counter has been AUTO-RESET so tracking continues:`,
+    ``,
+    ...lines,
+    ``,
+    `IMPORTANT: Reaching the mileage does not confirm the oil was changed.`,
+    `If any of these were NOT serviced, please schedule service now — the next`,
+    `reminder for each vehicle will not fire until it travels another full interval.`,
+    ``,
+    `— Automated reminder from Dynasty Communications fleet monitoring`,
+  ].join("\n");
+  await transporter.sendMail({
+    from: EMAIL_FROM, to,
+    subject: `Oil interval reached (auto-reset): ${vehicles.length} vehicle(s)${label ? " — " + label : ""}`,
+    text: body,
+  });
+  console.log(`  DUE/auto-reset email sent to ${to} (${vehicles.length})`);
 }
 
 // Reads the custom-reminder AddInData, checks each against odometer (mi) or
