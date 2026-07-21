@@ -61,6 +61,7 @@ var C = THEMES[theme];
 geotab.addin.jackMaintenance = function () {
   var api, toastEl, healthEl, oilEl, customEl, bodyEl, rootEl;
   var expandedAsset = null; // device id whose detail panel is open
+  var healthFilter = null;  // null | 'red' | 'amber' | 'green' — summary card filter
 
   // ---- utils ---------------------------------------------------------
   function toast(msg) {
@@ -390,21 +391,44 @@ geotab.addin.jackMaintenance = function () {
     scored.forEach(function (s){ counts[s.health.level]++; });
 
     var html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">' +
-      sumCard(counts.red,"Need service",C.red) + sumCard(counts.amber,"Watch",C.amber) +
-      sumCard(counts.green,"Healthy",C.green) + sumCard(devices.length,"Total assets",C.ink) + '</div>';
+      sumCard(counts.red,"Need service",C.red,"red") + sumCard(counts.amber,"Watch",C.amber,"amber") +
+      sumCard(counts.green,"Healthy",C.green,"green") + sumCard(devices.length,"Total assets",C.ink,null) + '</div>';
 
-    var anyAttention = scored.some(function (s){ return s.health.level!=="green"; });
-    if (anyAttention) html += sectionLabel("Needs attention");
+    // Apply filter
+    var visible = healthFilter ? scored.filter(function (s){ return s.health.level===healthFilter; }) : scored;
 
-    scored.forEach(function (s, idx) {
-      if (idx>0 && scored[idx-1].health.level!=="green" && s.health.level==="green") html += sectionLabel("Healthy");
-      html += assetCard(s.device, s.health, sensorMap[s.device.id]);
-    });
+    if (healthFilter) {
+      var fname = healthFilter==="red"?"Need service":healthFilter==="amber"?"Watch":"Healthy";
+      html += '<div style="display:flex; align-items:center; gap:10px; margin:4px 2px 12px;">' +
+        '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Showing: '+fname+'</span>' +
+        '<button id="clearFilter" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:6px; padding:3px 10px; font-size:12px; cursor:pointer;">Clear filter</button></div>';
+      visible.forEach(function (s) { html += assetCard(s.device, s.health, sensorMap[s.device.id]); });
+    } else {
+      var anyAttention = scored.some(function (s){ return s.health.level!=="green"; });
+      if (anyAttention) html += sectionLabel("Needs attention");
+      scored.forEach(function (s, idx) {
+        if (idx>0 && scored[idx-1].health.level!=="green" && s.health.level==="green") html += sectionLabel("Healthy");
+        html += assetCard(s.device, s.health, sensorMap[s.device.id]);
+      });
+    }
+
     if (!devices.length) html = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">No assets found.</div>';
     healthEl.innerHTML = html;
 
-    // wire clicks
-    scored.forEach(function (s) {
+    // wire summary-card filter clicks
+    document.querySelectorAll('[data-filter]').forEach(function (el) {
+      el.addEventListener("click", function () {
+        var f = el.getAttribute("data-filter");
+        healthFilter = (healthFilter===f || f==="") ? null : f;
+        expandedAsset = null;
+        renderHealth(devices, odoMap, faultMap, oilMap, sensorMap);
+      });
+    });
+    var cf = document.getElementById("clearFilter");
+    if (cf) cf.addEventListener("click", function () { healthFilter=null; renderHealth(devices, odoMap, faultMap, oilMap, sensorMap); });
+
+    // wire asset expand clicks
+    visible.forEach(function (s) {
       var card = document.getElementById("asset-"+cssId(s.device.id));
       if (!card) return;
       var head = card.querySelector('[data-role="head"]');
@@ -415,10 +439,13 @@ geotab.addin.jackMaintenance = function () {
     });
   }
 
-  function sumCard(num, label, fg) {
-    return '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:10px; padding:12px 16px; flex:1; min-width:120px; box-shadow:'+C.shadow+';">' +
+  function sumCard(num, label, fg, filterKey) {
+    var active = healthFilter && healthFilter===filterKey;
+    var clickable = filterKey!=null;
+    var border = active ? "2px solid "+fg : "1px solid "+C.line;
+    return '<div '+(clickable?'data-filter="'+filterKey+'" ':'')+'style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:12px 16px; flex:1; min-width:120px; box-shadow:'+C.shadow+';'+(clickable?' cursor:pointer;':'')+'">' +
       '<div style="font-size:26px; font-weight:700; letter-spacing:-0.02em; color:'+fg+';">'+num+'</div>' +
-      '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+label+'</div></div>';
+      '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+label+(clickable?' \u203a':'')+'</div></div>';
   }
   function sectionLabel(t) {
     return '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:18px 2px 10px;">'+t+'</div>';
@@ -552,8 +579,23 @@ geotab.addin.jackMaintenance = function () {
         '<div style="flex:1; min-width:240px;">' +
           '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:12px 0 2px;">Active faults &amp; recommendations</div>' +
           faultList +
+          debugBlock(sensors) +
         '</div>' +
       '</div>' +
+    '</div>';
+  }
+
+  // TEMP: shows the raw diagnostic names+values this asset reported, so tire/sensor
+  // matching can be tuned to the fleet's actual naming. Remove once dialed in.
+  var SHOW_DEBUG = true;
+  function debugBlock(sensors) {
+    if (!SHOW_DEBUG || !sensors || !sensors._raw || !sensors._raw.length) return "";
+    var rows = sensors._raw.map(function (r) {
+      return '<div style="font-size:11px; color:'+C.soft+'; padding:2px 0; font-family:monospace;">'+esc(r.name)+' = '+esc(String(r.value))+'</div>';
+    }).join("");
+    return '<div style="margin-top:14px; padding-top:12px; border-top:1px dashed '+C.line+';">' +
+      '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.amber+'; margin-bottom:4px;">Debug: raw diagnostics ('+sensors._raw.length+')</div>' +
+      rows +
     '</div>';
   }
 
