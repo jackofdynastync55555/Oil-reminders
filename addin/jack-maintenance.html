@@ -62,6 +62,7 @@ geotab.addin.jackMaintenance = function () {
   var api, toastEl, healthEl, oilEl, customEl, bodyEl, rootEl;
   var expandedAsset = null; // device id whose detail panel is open
   var healthFilter = null;  // null | 'red' | 'amber' | 'green' — summary card filter
+  var oilFilter = null;     // null | 'all' | 'ok' | 'soon' | 'due' — oil summary filter
 
   // ---- utils ---------------------------------------------------------
   function toast(msg) {
@@ -143,8 +144,9 @@ geotab.addin.jackMaintenance = function () {
   function classifyTireCorner(name) {
     var n = name.toLowerCase();
     if (!/tire|tyre/.test(n)) return null;
-    // Geotab names: "Tire pressure: Front left", "Tire pressure: Rear left/Outer rear left", etc.
-    // Check front/rear first, then left/right. "Outer" duplicates the side word, harmless.
+    // Exclude non-pressure tire diagnostics: "...status", "tire temperature", "sensor id", "warning light"
+    if (/status|temperature|sensor|warning|\bid\b/.test(n)) return null;
+    if (!/pressure/.test(n)) return null; // must be a pressure reading
     var isFront = /front/.test(n), isRear = /rear/.test(n);
     var isLeft = /left/.test(n), isRight = /right/.test(n);
     if (isFront && isLeft) return "fl";
@@ -669,19 +671,51 @@ geotab.addin.jackMaintenance = function () {
   function renderOil(devices, odoMap, oilMap) {
     if (!oilEl) return;
     var counts = { total:0, ok:0, soon:0, due:0 };
-    var frag = document.createElement("div");
+    // First pass: compute each vehicle's status so we can count + filter
+    var items = [];
     devices.forEach(function (device) {
-      var odoMeters = odoMap[device.id]; if (odoMeters==null) return; counts.total++;
+      var odoMeters = odoMap[device.id]; if (odoMeters==null) return;
+      counts.total++;
       var rec = oilMap[device.id]||null;
       var det = rec?rec.details:{ deviceId:device.id, deviceName:device.name, lastNotifiedMeters:odoMeters, intervalMiles:DEFAULT_INTERVAL_MILES, enabled:true, lastNotifiedDate:null };
       var interval = det.intervalMiles||DEFAULT_INTERVAL_MILES;
       var since = (odoMeters-det.lastNotifiedMeters)/METERS_PER_UNIT;
       var pct = Math.max(0,Math.min(100,(since/interval)*100)), remaining = interval-since;
+      var status;
+      if (det.enabled===false) status = "off";
+      else if (remaining<=0){ status="due"; counts.due++; }
+      else if (pct>=85){ status="soon"; counts.soon++; }
+      else { status="ok"; counts.ok++; }
+      items.push({ device:device, rec:rec, det:det, odoMeters:odoMeters, interval:interval, since:since, pct:pct, remaining:remaining, status:status });
+    });
+
+    // Summary (clickable filters)
+    var summary = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">' +
+      oilSumCard(counts.total,"Vehicles tracked",C.ink,"all") +
+      oilSumCard(counts.ok,"On track",C.green,"ok") +
+      oilSumCard(counts.soon,"Due soon",counts.soon?C.amber:C.ink,"soon") +
+      oilSumCard(counts.due,"Due now",counts.due?C.red:C.ink,"due") + '</div>';
+
+    if (oilFilter && oilFilter!=="all") {
+      var fname = oilFilter==="ok"?"On track":oilFilter==="soon"?"Due soon":"Due now";
+      summary += '<div style="display:flex; align-items:center; gap:10px; margin:0 2px 14px;">' +
+        '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Showing: '+fname+'</span>' +
+        '<button id="clearOilFilter" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:6px; padding:3px 10px; font-size:12px; cursor:pointer;">Clear filter</button></div>';
+    }
+
+    oilEl.innerHTML = summary;
+    if (counts.total===0) { oilEl.innerHTML += '<div style="text-align:center; color:'+C.soft+'; padding:40px 20px;">No vehicles with odometer data yet.</div>'; return; }
+
+    var visible = (oilFilter && oilFilter!=="all") ? items.filter(function (it){ return it.status===oilFilter; }) : items;
+    var frag = document.createElement("div");
+
+    visible.forEach(function (it) {
+      var device=it.device, det=it.det, rec=it.rec, odoMeters=it.odoMeters, interval=it.interval, since=it.since, pct=it.pct, remaining=it.remaining;
       var pillHtml, fill;
-      if (det.enabled===false){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
-      else if (remaining<=0){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; counts.due++; }
-      else if (pct>=85){ pillHtml=pill("Due soon \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.amberBg,C.amber); fill=C.amber; counts.soon++; }
-      else { pillHtml=pill("On track \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.greenBg,C.green); fill=C.brand; counts.ok++; }
+      if (it.status==="off"){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
+      else if (it.status==="due"){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
+      else if (it.status==="soon"){ pillHtml=pill("Due soon \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.amberBg,C.amber); fill=C.amber; }
+      else { pillHtml=pill("On track \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.greenBg,C.green); fill=C.brand; }
       var histHtml = "";
       var hist = (det.history || []).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
       if (hist.length) {
@@ -725,19 +759,32 @@ geotab.addin.jackMaintenance = function () {
       card.querySelector('[data-act="reset"]').addEventListener("click", function () {
         det.lastNotifiedMeters = odoMeters; det.lastNotifiedDate = new Date().toISOString(); det.deviceName = device.name;
         det.emailPending = true; det.emailPendingReason = "serviced"; det.emailPendingOdoMeters = odoMeters;
-        // Record to service history
         if (!det.history) det.history = [];
         det.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "manual" });
         persistOil(rec, det, device, oilMap).then(function () { toast(device.name+" marked serviced — confirmation queued"); reloadAll(); });
       });
       frag.appendChild(card);
     });
-    var summary = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">' +
-      sumCard(counts.total,"Vehicles tracked",C.ink) + sumCard(counts.ok,"On track",C.green) +
-      sumCard(counts.soon,"Due soon",counts.soon?C.amber:C.ink) + sumCard(counts.due,"Due now",counts.due?C.red:C.ink) + '</div>';
-    oilEl.innerHTML = summary;
-    if (counts.total===0) oilEl.innerHTML += '<div style="text-align:center; color:'+C.soft+'; padding:40px 20px;">No vehicles with odometer data yet.</div>';
-    else oilEl.appendChild(frag);
+
+    oilEl.appendChild(frag);
+
+    // wire filter clicks
+    document.querySelectorAll('[data-oilfilter]').forEach(function (el) {
+      el.addEventListener("click", function () {
+        var f = el.getAttribute("data-oilfilter");
+        oilFilter = (oilFilter===f) ? null : f;
+        renderOil(devices, odoMap, oilMap);
+      });
+    });
+    var cof = document.getElementById("clearOilFilter");
+    if (cof) cof.addEventListener("click", function () { oilFilter=null; renderOil(devices, odoMap, oilMap); });
+  }
+  function oilSumCard(num, label, fg, filterKey) {
+    var active = oilFilter===filterKey;
+    var border = active ? "2px solid "+fg : "1px solid "+C.line;
+    return '<div data-oilfilter="'+filterKey+'" style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:12px 16px; flex:1; min-width:120px; box-shadow:'+C.shadow+'; cursor:pointer;">' +
+      '<div style="font-size:26px; font-weight:700; letter-spacing:-0.02em; color:'+fg+';">'+num+'</div>' +
+      '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+label+' \u203a</div></div>';
   }
   function persistOil(rec, det, device, oilMap) {
     var entity = { addInId:ADD_IN_ID, groups:[{id:"GroupCompanyId"}], details:det };
