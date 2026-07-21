@@ -226,15 +226,33 @@ geotab.addin.jackMaintenance = function () {
   // Geotab reports tire pressure in Pascals; convert to psi. (316000 Pa ≈ 45.8 psi)
   function paToPsi(v) { return v == null ? null : v * 0.000145038; }
   function getSensors(devices) {
-    var from = daysAgo(7), to = new Date().toISOString();
-    // Pull the recent StatusData window per device (all diagnostics), then classify by name.
+    // Use a SHORT window (last 24h) so results aren't truncated before the newest
+    // readings. Geotab returns StatusData oldest-first, so a wide window + a result
+    // cap can cut off the most recent values — a tight window avoids that.
+    var from = daysAgo(1), to = new Date().toISOString();
     var calls = devices.map(function (d) {
-      return ["Get", { typeName:"StatusData", resultsLimit: 500, search:{
+      return ["Get", { typeName:"StatusData", resultsLimit: 2000, search:{
         deviceSearch:{id:d.id}, fromDate:from, toDate:to
       }}];
     });
     if (!calls.length) return Promise.resolve({});
     return multiCall(calls).then(function (rs) {
+      // For any device with NO rows in the last 24h (e.g. parked), retry with a 7-day window
+      var wideFrom = daysAgo(7);
+      var retries = [], retryIdx = [];
+      rs.forEach(function (arr, i) {
+        if (!arr || arr.length === 0) {
+          retryIdx.push(i);
+          retries.push(["Get", { typeName:"StatusData", resultsLimit: 2000, search:{
+            deviceSearch:{id:devices[i].id}, fromDate:wideFrom, toDate:to
+          }}]);
+        }
+      });
+      var retryPromise = retries.length ? multiCall(retries).then(function (rr) {
+        rr.forEach(function (arr, k) { rs[retryIdx[k]] = arr; });
+      }).catch(function(){}) : Promise.resolve();
+
+      return retryPromise.then(function () {
       // Collect diagnostic ids we need names for
       var needNames = {};
       rs.forEach(function (arr) {
@@ -264,7 +282,7 @@ geotab.addin.jackMaintenance = function () {
             var when = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
             if (!latest[id] || when > latest[id].when) latest[id] = { value: sd.data, when: when };
           });
-          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, _raw:[] };
+          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, idleFuel:null, _raw:[] };
           Object.keys(latest).forEach(function (id) {
             var meta = diagMetaCache[id] || { name:id };
             var nm = (meta.name||"").toLowerCase();
@@ -276,6 +294,8 @@ geotab.addin.jackMaintenance = function () {
               if (psi != null && psi > 0 && psi < 200 && corner !== "generic") info.tires[corner] = psi;
             } else if (/engine oil life remaining|oil life/.test(nm)) {
               info.oilLife = val; // percentage remaining, from the vehicle's own monitor
+            } else if (/idle.*fuel|fuel.*idle/.test(nm)) {
+              info.idleFuel = val; // total fuel used while idling (check before "fuel level")
             } else if (/fuel level/.test(nm)) {
               info.fuel = val; // percentage
             } else if (/engine speed|\brpm\b/.test(nm)) {
@@ -300,6 +320,7 @@ geotab.addin.jackMaintenance = function () {
         });
         return out;
       });
+      }); // close retryPromise.then
     }).catch(function (e) {
       console.warn("sensors multiCall failed:", e && e.message);
       return {};
@@ -593,13 +614,17 @@ geotab.addin.jackMaintenance = function () {
     }
     if (sensors && sensors.coolant != null) {
       var cc = sensors.coolant >= 240 ? C.red : (sensors.coolant >= 225 ? C.amber : C.ink);
-      rows += readRow("Coolant temp", '<span style="color:'+cc+'; font-weight:600;">'+Math.round(sensors.coolant)+'\u00b0</span>');
+      rows += readRow("Coolant temp", '<span style="color:'+cc+'; font-weight:600;">'+Math.round(sensors.coolant)+'\u00b0F</span>');
     }
     if (sensors && sensors.rpm != null) {
       rows += readRow("Engine RPM", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.rpm)+'</span>');
     }
     if (sensors && sensors.engineHours != null) {
       rows += readRow("Engine hours", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.engineHours)+' h</span>');
+    }
+    if (sensors && sensors.idleFuel != null) {
+      var gal = sensors.idleFuel * 0.264172; // Geotab reports liters; convert to US gallons
+      rows += readRow("Fuel used idling", '<span style="color:'+C.ink+'; font-weight:600;">'+ (gal >= 100 ? fmt(gal) : gal.toFixed(1)) +' gal</span>');
     }
     if (sensors && sensors.oilLife != null) {
       var olc = sensors.oilLife < 15 ? C.red : (sensors.oilLife < 30 ? C.amber : C.green);
