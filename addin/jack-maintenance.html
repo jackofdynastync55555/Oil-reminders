@@ -34,7 +34,7 @@
 "use strict";
 
 var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
-var CUSTOM_ADD_IN_ID = "aWI4NTRlNjItNzc5Ny1jdXN0"; // separate store for custom reminders
+var CUSTOM_ADD_IN_ID = "ajE5ODViNGYtOTJmZC0wODk"; // separate store for custom reminders
 var DEFAULT_INTERVAL_MILES = 10000;
 var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
@@ -141,18 +141,12 @@ geotab.addin.jackMaintenance = function () {
   var diagMetaCache = {}; // id -> { name, unit } for status diagnostics we've seen
   function classifyTireCorner(name) {
     var n = name.toLowerCase();
-    if (!/tire|tyre|pressure/.test(n)) return null;
-    var front = /front|frnt|\bf\b|steer/.test(n), rear = /rear|\br\b|drive|tag/.test(n);
-    var left = /left|\blf\b|\blr\b|\bl\b|driver/.test(n), right = /right|\brf\b|\brr\b|\br\b|pass/.test(n);
-    // position abbreviations
-    if (/\blf\b|front.*left|left.*front/.test(n)) return "fl";
-    if (/\brf\b|front.*right|right.*front/.test(n)) return "fr";
-    if (/\blr\b|rear.*left|left.*rear/.test(n)) return "rl";
-    if (/\brr\b|rear.*right|right.*rear/.test(n)) return "rr";
-    if (front && left) return "fl";
-    if (front && right) return "fr";
-    if (rear && left) return "rl";
-    if (rear && right) return "rr";
+    if (!/tire|tyre/.test(n)) return null; // must mention tire/tyre, not just "pressure"
+    // Match explicit position phrases only — avoid greedy single-letter matches
+    if (/front.*left|left.*front|\blf\b|\bfl\b/.test(n)) return "fl";
+    if (/front.*right|right.*front|\brf\b|\bfr\b/.test(n)) return "fr";
+    if (/rear.*left|left.*rear|\blr\b|\brl\b/.test(n)) return "rl";
+    if (/rear.*right|right.*rear|\brr\b/.test(n)) return "rr";
     return "generic";
   }
   function getSensors(devices) {
@@ -203,17 +197,17 @@ geotab.addin.jackMaintenance = function () {
             var corner = classifyTireCorner(meta.name||"");
             if (corner) {
               // Geotab reports tire pressure already in PSI for this fleet (verified in Asset > Maintenance)
-              if (val != null && val < 200) info.tires[corner] = val;
-            } else if (/fuel.*level|level.*fuel/.test(nm) || nm === "fuel level") {
+              if (val != null && val < 200 && corner !== "generic") info.tires[corner] = val;
+            } else if (/fuel level/.test(nm)) {
               info.fuel = val; // percentage
-            } else if (/engine speed|\brpm\b|revolution/.test(nm)) {
+            } else if (/engine speed|\brpm\b/.test(nm)) {
               info.rpm = val;
             } else if (/electrical system rating|\besr\b/.test(nm)) {
               info.esr = val; // 0-100 %
-            } else if (/battery|voltage/.test(nm)) {
+            } else if (/battery voltage|\bbattery\b/.test(nm) && /volt/.test(nm)) {
               info.battery = val; // volts
-            } else if (/coolant/.test(nm)) {
-              info.coolant = val; // unit handled at display/threshold
+            } else if (/engine coolant temp|coolant temp/.test(nm)) {
+              info.coolant = val; // °F on this fleet (verified: 185°F in Asset > Maintenance)
             } else if (/engine hour/.test(nm)) {
               info.engineHours = val;
             }
