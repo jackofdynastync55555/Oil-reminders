@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DynastyJack Maintenance</title>
+</head>
+<body style="margin:0; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; background:#f5f6f8; color:#16202b; font-size:14px; line-height:1.4;">
+<div style="max-width:920px; margin:0 auto; padding:24px 20px 56px;">
+
+  <!-- Header -->
+  <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px;">
+    <div>
+      <div style="font-size:23px; font-weight:700; letter-spacing:-0.02em;">DynastyJack Maintenance</div>
+      <div style="color:#64748b; margin-top:4px; font-size:13px;">Fleet-wide maintenance visibility — faults, service, and device health in one place.</div>
+    </div>
+    <button id="refreshBtn" style="background:#ffffff; border:1px solid #e6eaf0; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; color:#0b5fa5; cursor:pointer;">Refresh</button>
+  </div>
+
+  <!-- Tabs -->
+  <div id="tabs" style="display:flex; gap:4px; border-bottom:1px solid #e6eaf0; margin-bottom:20px;">
+    <button data-tab="health" style="background:none; border:none; border-bottom:2px solid #0b5fa5; color:#0b5fa5; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Fleet Health</button>
+    <button data-tab="oil" style="background:none; border:none; border-bottom:2px solid transparent; color:#64748b; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Oil Reminders</button>
+  </div>
+
+  <div id="health"></div>
+  <div id="oil" style="display:none;"></div>
+</div>
+<div id="toast" style="position:fixed; bottom:22px; left:50%; transform:translateX(-50%) translateY(10px); background:#16202b; color:#fff; padding:10px 20px; border-radius:10px; font-size:13px; font-weight:500; opacity:0; pointer-events:none; transition:opacity .22s, transform .22s; z-index:99;"></div>
+
+<script>
+"use strict";
+
+var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
+var DEFAULT_INTERVAL_MILES = 10000;
+var UNITS = "mi";
+var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
+var FAULT_LOOKBACK_DAYS = 30;      // window for pulling active faults
+var STALE_REPORT_DAYS = 3;         // device "not reporting" threshold
+
+var COL = {
+  card:"#ffffff", ink:"#16202b", soft:"#64748b", faint:"#94a3b8", line:"#e6eaf0",
+  brand:"#0b5fa5", brandSoft:"#e8f1fa", track:"#eef1f5",
+  green:"#178a54", greenBg:"#e7f5ee", amber:"#b26a00", amberBg:"#fbf0dc",
+  red:"#c0362f", redBg:"#fbe6e4", page:"#f5f6f8"
+};
+
+geotab.addin.jackMaintenance = function () {
+  var api, toastEl;
+  var healthEl, oilEl;
+  var diagCache = {}; // id -> diagnostic name (faults reference these, rarely change)
+
+  // ---- utilities -------------------------------------------------------
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.style.opacity = "1";
+    toastEl.style.transform = "translateX(-50%) translateY(0)";
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () {
+      toastEl.style.opacity = "0";
+      toastEl.style.transform = "translateX(-50%) translateY(10px)";
+    }, 2400);
+  }
+  function apiCall(method, params) {
+    return new Promise(function (resolve, reject) { api.call(method, params, resolve, reject); });
+  }
+  function multiCall(calls) {
+    return new Promise(function (resolve, reject) { api.multiCall(calls, resolve, reject); });
+  }
+  function fmt(n) { return Math.round(n).toLocaleString(); }
+  function daysAgo(n) { var d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); }
+  function pill(text, bg, fg) {
+    return '<span style="font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; white-space:nowrap; background:' +
+      bg + '; color:' + fg + '; display:inline-block;">' + text + '</span>';
+  }
+  function dot(color) {
+    return '<span style="display:inline-block; width:11px; height:11px; border-radius:50%; background:' + color + '; flex:none;"></span>';
+  }
+
+  // ---- data loading ----------------------------------------------------
+  function getDevices() {
+    return apiCall("Get", { typeName: "Device" }).then(function (devs) {
+      return devs.filter(function (d) { return !d.activeTo || new Date(d.activeTo) > new Date(); });
+    });
+  }
+
+  function getOilState() {
+    return apiCall("Get", { typeName: "AddInData", search: { addInId: ADD_IN_ID } })
+      .then(function (records) {
+        var byDevice = {};
+        records.forEach(function (rec) {
+          var det = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
+          if (det && det.deviceId) byDevice[det.deviceId] = { id: rec.id, details: det };
+        });
+        return byDevice;
+      });
+  }
+
+  // Latest odometer per device via multiCall (one call each, batched)
+  function getOdometers(devices) {
+    var now = new Date().toISOString();
+    var calls = devices.map(function (d) {
+      return ["Get", { typeName: "StatusData", search: {
+        deviceSearch: { id: d.id },
+        diagnosticSearch: { id: "DiagnosticOdometerAdjustmentId" },
+        fromDate: now, toDate: now
+      }}];
+    });
+    return multiCall(calls).then(function (results) {
+      var map = {};
+      results.forEach(function (r, i) {
+        map[devices[i].id] = (r && r.length && r[0].data != null) ? r[0].data : null;
+      });
+      return map;
+    });
+  }
+
+  // Active faults in the lookback window, grouped per device by severity
+  function getFaults(devices) {
+    return apiCall("Get", {
+      typeName: "FaultData",
+      search: { fromDate: daysAgo(FAULT_LOOKBACK_DAYS), toDate: new Date().toISOString() }
+    }).then(function (faults) {
+      // keep only currently-active, non-dismissed faults
+      var active = faults.filter(function (f) {
+        var isActive = f.faultState ? (f.faultState === "Active" || f.faultState === "PendingAndActive") : true;
+        return isActive && !f.dismissDateTime;
+      });
+      var byDevice = {};
+      active.forEach(function (f) {
+        var did = f.device && f.device.id;
+        if (!did) return;
+        if (!byDevice[did]) byDevice[did] = { total: 0, red: 0, amber: 0, diagIds: {} };
+        byDevice[did].total++;
+        // Severity: Geotab uses "severity" like "Critical"/"Warning"/etc when available
+        var sev = (f.severity || "").toLowerCase();
+        if (sev.indexOf("crit") >= 0 || sev.indexOf("severe") >= 0 || sev.indexOf("high") >= 0) byDevice[did].red++;
+        else byDevice[did].amber++;
+        if (f.diagnostic && f.diagnostic.id) byDevice[did].diagIds[f.diagnostic.id] = true;
+      });
+      return byDevice;
+    });
+  }
+
+  // ---- health scoring --------------------------------------------------
+  // Returns { level: 'red'|'amber'|'green', score, reasons:[], detail:{...} }
+  function scoreVehicle(device, odoMeters, faults, oil) {
+    var reasons = [];
+    var level = "green";
+
+    function bump(to) {
+      if (to === "red") level = "red";
+      else if (to === "amber" && level !== "red") level = "amber";
+    }
+
+    // 1. Engine fault codes
+    if (faults && faults.total > 0) {
+      if (faults.red > 0) { bump("red"); reasons.push(faults.red + " critical fault" + (faults.red > 1 ? "s" : "")); }
+      if (faults.amber > 0) { bump("amber"); reasons.push(faults.amber + " fault" + (faults.amber > 1 ? "s" : "")); }
+    }
+
+    // 2. Oil overdue
+    var oilInfo = null;
+    if (oil && odoMeters != null) {
+      var det = oil.details;
+      var interval = det.intervalMiles || DEFAULT_INTERVAL_MILES;
+      var since = (odoMeters - det.lastNotifiedMeters) / METERS_PER_UNIT;
+      var remaining = interval - since;
+      oilInfo = { since: since, interval: interval, remaining: remaining, enabled: det.enabled !== false };
+      if (det.enabled !== false) {
+        if (remaining <= 0) { bump("red"); reasons.push("oil change overdue"); }
+        else if (remaining <= interval * 0.15) { bump("amber"); reasons.push("oil due soon"); }
+      }
+    }
+
+    // 3. Device health — not reporting recently
+    var lastComm = device.activeTo && new Date(device.activeTo) < new Date() ? null : null;
+    // Geotab doesn't expose lastComm on Device directly here; use odometer presence as a proxy
+    if (odoMeters == null) { bump("amber"); reasons.push("no recent data"); }
+
+    return { level: level, reasons: reasons, faults: faults, oil: oilInfo, odoMeters: odoMeters };
+  }
+
+  // ---- rendering: FLEET HEALTH ----------------------------------------
+  function renderHealth(devices, odoMap, faultMap, oilMap) {
+    var scored = devices.map(function (d) {
+      return { device: d, health: scoreVehicle(d, odoMap[d.id], faultMap[d.id], oilMap[d.id]) };
+    });
+
+    var order = { red: 0, amber: 1, green: 2 };
+    scored.sort(function (a, b) {
+      if (order[a.health.level] !== order[b.health.level]) return order[a.health.level] - order[b.health.level];
+      var fa = (a.health.faults && a.health.faults.total) || 0;
+      var fb = (b.health.faults && b.health.faults.total) || 0;
+      return fb - fa;
+    });
+
+    var counts = { red: 0, amber: 0, green: 0 };
+    scored.forEach(function (s) { counts[s.health.level]++; });
+
+    var html = "";
+
+    // Summary strip
+    html += '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">';
+    html += summaryCard(counts.red, "Need service", COL.red, COL.redBg);
+    html += summaryCard(counts.amber, "Watch", COL.amber, COL.amberBg);
+    html += summaryCard(counts.green, "Healthy", COL.green, COL.greenBg);
+    html += summaryCard(devices.length, "Total assets", COL.ink, COL.card);
+    html += '</div>';
+
+    // Attention banner (only if something is red/amber)
+    var attention = scored.filter(function (s) { return s.health.level !== "green"; });
+    if (attention.length) {
+      html += '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:' + COL.soft + '; margin:4px 2px 10px;">Needs attention</div>';
+    }
+
+    scored.forEach(function (s, idx) {
+      // Insert a divider label when we cross into all-green
+      if (idx > 0 && scored[idx - 1].health.level !== "green" && s.health.level === "green") {
+        html += '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:' + COL.soft + '; margin:18px 2px 10px;">Healthy</div>';
+      }
+      html += healthCard(s.device, s.health);
+    });
+
+    if (!devices.length) {
+      html = '<div style="text-align:center; color:' + COL.soft + '; padding:56px 20px;">No assets found.</div>';
+    }
+
+    healthEl.innerHTML = html;
+  }
+
+  function summaryCard(num, label, fg, bg) {
+    return '<div style="background:' + COL.card + '; border:1px solid ' + COL.line + '; border-radius:10px; padding:12px 16px; flex:1; min-width:120px;">' +
+      '<div style="font-size:26px; font-weight:700; letter-spacing:-0.02em; color:' + fg + ';">' + num + '</div>' +
+      '<div style="font-size:12px; color:' + COL.soft + '; margin-top:2px;">' + label + '</div></div>';
+  }
+
+  function healthCard(device, h) {
+    var edge = h.level === "red" ? COL.red : h.level === "amber" ? COL.amber : COL.green;
+    var dotColor = edge;
+
+    var reasonTxt = h.reasons.length ? h.reasons.join(" · ") : "All clear";
+
+    // fault severity chips
+    var chips = "";
+    if (h.faults && h.faults.total > 0) {
+      if (h.faults.red > 0) chips += pill(h.faults.red + " critical", COL.redBg, COL.red) + " ";
+      if (h.faults.amber > 0) chips += pill(h.faults.amber + " warning", COL.amberBg, COL.amber) + " ";
+    }
+    // oil chip
+    if (h.oil && h.oil.enabled) {
+      if (h.oil.remaining <= 0) chips += pill("oil overdue", COL.redBg, COL.red) + " ";
+      else if (h.oil.remaining <= h.oil.interval * 0.15) chips += pill("oil " + fmt(h.oil.remaining) + " " + UNITS, COL.amberBg, COL.amber) + " ";
+    }
+    if (h.odoMeters == null) chips += pill("no data", COL.track, COL.faint) + " ";
+    if (!chips) chips = pill("healthy", COL.greenBg, COL.green);
+
+    var odoTxt = h.odoMeters != null ? fmt(h.odoMeters / METERS_PER_UNIT) + " " + UNITS : "—";
+
+    return '<div style="background:' + COL.card + '; border:1px solid ' + COL.line + '; border-left:4px solid ' + edge + '; border-radius:10px; padding:14px 16px; margin-bottom:10px;">' +
+      '<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">' +
+        dot(dotColor) +
+        '<span style="font-size:15px; font-weight:650; flex:1;">' + escapeHtml(device.name) + '</span>' +
+        '<span style="font-size:12px; color:' + COL.soft + '; white-space:nowrap;">' + odoTxt + '</span>' +
+      '</div>' +
+      '<div style="margin-bottom:8px;">' + chips + '</div>' +
+      '<div style="font-size:12.5px; color:' + COL.soft + ';">' + escapeHtml(reasonTxt) + '</div>' +
+    '</div>';
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c];
+    });
+  }
+
+  // ---- rendering: OIL REMINDERS (full tab, editable) ------------------
+  function renderOil(devices, odoMap, oilMap) {
+    oilEl.innerHTML = "";
+    var counts = { total: 0, ok: 0, soon: 0, due: 0 };
+    var frag = document.createElement("div");
+
+    devices.forEach(function (device) {
+      var odoMeters = odoMap[device.id];
+      if (odoMeters == null) return;
+      counts.total++;
+
+      var rec = oilMap[device.id] || null;
+      var det = rec ? rec.details : {
+        deviceId: device.id, deviceName: device.name,
+        lastNotifiedMeters: odoMeters, intervalMiles: DEFAULT_INTERVAL_MILES,
+        enabled: true, lastNotifiedDate: null
+      };
+
+      var interval = det.intervalMiles || DEFAULT_INTERVAL_MILES;
+      var since = (odoMeters - det.lastNotifiedMeters) / METERS_PER_UNIT;
+      var pct = Math.max(0, Math.min(100, (since / interval) * 100));
+      var remaining = interval - since;
+
+      var pillHtml, fillColor;
+      if (det.enabled === false) { pillHtml = pill("Off", COL.track, COL.faint); fillColor = COL.faint; }
+      else if (remaining <= 0) { pillHtml = pill("Due now", COL.redBg, COL.red); fillColor = COL.red; counts.due++; }
+      else if (pct >= 85) { pillHtml = pill("Due soon · " + fmt(remaining) + " " + UNITS + " left", COL.amberBg, COL.amber); fillColor = COL.amber; counts.soon++; }
+      else { pillHtml = pill("On track · " + fmt(remaining) + " " + UNITS + " left", COL.greenBg, COL.green); fillColor = COL.brand; counts.ok++; }
+
+      var card = document.createElement("div");
+      card.style.cssText = "background:" + COL.card + "; border:1px solid " + COL.line + "; border-radius:12px; padding:16px 18px; margin-bottom:12px;";
+      card.innerHTML =
+        '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px;">' +
+          '<span style="font-size:16px; font-weight:650;">' + escapeHtml(device.name) + '</span>' +
+          '<span style="font-size:13px; color:' + COL.soft + '; white-space:nowrap;">' + fmt(odoMeters / METERS_PER_UNIT) + ' ' + UNITS + ' total</span>' +
+        '</div>' +
+        '<div><div style="height:8px; background:' + COL.track + '; border-radius:999px; overflow:hidden;">' +
+          '<div style="height:100%; width:' + pct + '%; border-radius:999px; background:' + fillColor + ';"></div></div>' +
+          '<div style="display:flex; justify-content:space-between; margin-top:7px; font-size:12px; color:' + COL.soft + ';">' +
+            '<span>' + fmt(Math.max(0, since)) + ' / ' + fmt(interval) + ' ' + UNITS + '</span>' + pillHtml +
+          '</div></div>' +
+        '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid ' + COL.line + ';">' +
+          '<span style="font-size:13px; color:' + COL.soft + ';">Interval <input type="number" min="500" step="500" value="' + interval + '" style="width:92px; padding:7px 9px; border:1px solid ' + COL.line + '; border-radius:8px; font-size:13px;"> ' + UNITS + '</span>' +
+          '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:' + COL.soft + '; cursor:pointer;"><input type="checkbox" ' + (det.enabled !== false ? "checked" : "") + ' style="width:15px; height:15px;"> Reminders on</label>' +
+          '<span style="flex:1;"></span>' +
+          '<button data-act="reset" style="border:1px solid ' + COL.line + '; background:transparent; color:' + COL.brand + '; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
+          '<button data-act="save" style="border:none; background:' + COL.brand + '; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
+        '</div>';
+
+      var intervalInput = card.querySelector('input[type="number"]');
+      var enabledInput = card.querySelector('input[type="checkbox"]');
+      var resetBtn = card.querySelector('[data-act="reset"]');
+      var saveBtn = card.querySelector('[data-act="save"]');
+
+      function persist(newDetails) {
+        var entity = { addInId: ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details: newDetails };
+        var method = rec && rec.id ? "Set" : "Add";
+        if (rec && rec.id) entity.id = rec.id;
+        return apiCall(method, { typeName: "AddInData", entity: entity }).then(function (newId) {
+          if (!rec) rec = { id: newId, details: newDetails }; else rec.details = newDetails;
+          oilMap[device.id] = rec;
+        });
+      }
+
+      saveBtn.addEventListener("click", function () {
+        det.intervalMiles = Number(intervalInput.value) || DEFAULT_INTERVAL_MILES;
+        det.enabled = enabledInput.checked;
+        det.deviceName = device.name;
+        persist(det).then(function () { toast("Saved " + device.name); reloadAll(); });
+      });
+      resetBtn.addEventListener("click", function () {
+        det.lastNotifiedMeters = odoMeters;
+        det.lastNotifiedDate = new Date().toISOString();
+        det.deviceName = device.name;
+        det.emailPending = true;
+        det.emailPendingReason = "serviced";
+        det.emailPendingOdoMeters = odoMeters;
+        persist(det).then(function () { toast(device.name + " marked serviced — confirmation queued"); reloadAll(); });
+      });
+
+      frag.appendChild(card);
+    });
+
+    var summary = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">' +
+      summaryCard(counts.total, "Vehicles tracked", COL.ink, COL.card) +
+      summaryCard(counts.ok, "On track", COL.green, COL.greenBg) +
+      summaryCard(counts.soon, "Due soon", counts.soon ? COL.amber : COL.ink, COL.amberBg) +
+      summaryCard(counts.due, "Due now", counts.due ? COL.red : COL.ink, COL.redBg) +
+      '</div>';
+    oilEl.innerHTML = summary;
+    if (counts.total === 0) {
+      oilEl.innerHTML += '<div style="text-align:center; color:' + COL.soft + '; padding:40px 20px;">No vehicles with odometer data yet.</div>';
+    } else {
+      oilEl.appendChild(frag);
+    }
+  }
+
+  // ---- orchestration ---------------------------------------------------
+  var cache = { devices: [], odoMap: {}, faultMap: {}, oilMap: {} };
+
+  function reloadAll() {
+    healthEl.innerHTML = '<div style="text-align:center; color:' + COL.soft + '; padding:56px 20px;">Loading fleet…</div>';
+    getDevices().then(function (devices) {
+      cache.devices = devices;
+      return Promise.all([
+        getOdometers(devices),
+        getFaults(devices),
+        getOilState()
+      ]);
+    }).then(function (res) {
+      cache.odoMap = res[0];
+      cache.faultMap = res[1];
+      cache.oilMap = res[2];
+      renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap);
+      renderOil(cache.devices, cache.odoMap, cache.oilMap);
+    }).catch(function (err) {
+      healthEl.innerHTML = '<div style="text-align:center; color:' + COL.soft + '; padding:56px 20px;">Couldn\u2019t load data: ' +
+        (err && err.message ? err.message : err) + '</div>';
+    });
+  }
+
+  function switchTab(name) {
+    healthEl.style.display = name === "health" ? "" : "none";
+    oilEl.style.display = name === "oil" ? "" : "none";
+    var btns = document.querySelectorAll("#tabs button");
+    btns.forEach(function (b) {
+      var active = b.getAttribute("data-tab") === name;
+      b.style.borderBottom = active ? "2px solid " + COL.brand : "2px solid transparent";
+      b.style.color = active ? COL.brand : COL.soft;
+    });
+  }
+
+  return {
+    initialize: function (freshApi, state, cb) {
+      api = freshApi;
+      healthEl = document.getElementById("health");
+      oilEl = document.getElementById("oil");
+      toastEl = document.getElementById("toast");
+      document.getElementById("refreshBtn").addEventListener("click", reloadAll);
+      document.querySelectorAll("#tabs button").forEach(function (b) {
+        b.addEventListener("click", function () { switchTab(b.getAttribute("data-tab")); });
+      });
+      cb();
+    },
+    focus: function (freshApi) { api = freshApi; reloadAll(); },
+    blur: function () {}
+  };
+};
+</script>
+</body>
+</html>
