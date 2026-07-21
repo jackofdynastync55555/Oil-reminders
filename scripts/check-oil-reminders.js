@@ -100,13 +100,24 @@ function makeClient() {
 // ---------------------------------------------------------------------------
 // Data helpers
 // ---------------------------------------------------------------------------
+// Only real GO-device vehicles (skips manually-created test/placeholder assets)
+function isRealGoDevice(x) {
+  const sn = (x.serialNumber || "").trim();
+  const hasSerial = sn.length > 0 && !/^0+$/.test(sn) && sn.toUpperCase() !== "NOSERIALNUMBER";
+  const dt = (x.deviceType || "").toLowerCase();
+  const isCustom = dt.indexOf("custom") >= 0 || dt.indexOf("untracked") >= 0;
+  return hasSerial && !isCustom;
+}
+
 async function getDevices(client, targetGroupId) {
   const devices = await client.call("Get", {
     typeName: "Device",
     search: { groups: [{ id: targetGroupId }] },
   });
   const now = new Date();
-  return devices.filter((d) => !d.activeTo || new Date(d.activeTo) > now);
+  return devices.filter(
+    (d) => (!d.activeTo || new Date(d.activeTo) > now) && isRealGoDevice(d)
+  );
 }
 
 async function getOdometerMeters(client, deviceId) {
