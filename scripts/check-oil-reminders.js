@@ -23,6 +23,7 @@ const nodemailer = require("nodemailer");
 // CONFIG
 // ---------------------------------------------------------------------------
 const ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
+const CUSTOM_ADD_IN_ID = "aWI4NTRlNjItNzc5Ny1jdXN0"; // custom reminders store
 
 const UNITS = "mi"; // "mi" or "km" — match the Add-In HTML
 const METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
@@ -230,9 +231,11 @@ async function processAccount(account) {
 
   const due = [];
   const serviced = []; // vehicles flagged 'Mark serviced now' in the Add-In
+  const odometerByDevice = {}; // for custom distance reminders
 
   for (const device of devices) {
     const odoMeters = await getOdometerMeters(client, device.id);
+    odometerByDevice[device.id] = odoMeters;
     if (odoMeters == null) {
       console.log(`    ${device.name}: no odometer data, skipping`);
       continue;
@@ -318,6 +321,81 @@ async function processAccount(account) {
     }
   } else {
     console.log(`  No vehicles due. No email sent.`);
+  }
+
+  // ---- Custom reminders (distance or time) --------------------------
+  try {
+    await processCustomReminders(client, account, label, odometerByDevice);
+  } catch (e) {
+    console.error(`  Custom reminders error on ${label}: ${e.message}`);
+  }
+}
+
+// Reads the custom-reminder AddInData, checks each against odometer (mi) or
+// elapsed days, emails the ones that are due, and resets their baseline.
+async function processCustomReminders(client, account, label, odometerByDevice) {
+  const records = await client.call("Get", {
+    typeName: "AddInData",
+    search: { addInId: CUSTOM_ADD_IN_ID },
+  });
+  const dueCustom = [];
+
+  for (const rec of records) {
+    const d = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
+    if (!d || d.enabled === false) continue;
+
+    let isDue = false;
+    let atText = "";
+    if (d.type === "days") {
+      const start = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
+      const elapsedDays = (Date.now() - start) / 86400000;
+      if (elapsedDays >= d.interval) { isDue = true; atText = `${Math.round(elapsedDays)} days elapsed`; }
+    } else {
+      const odo = odometerByDevice ? odometerByDevice[d.deviceId] : null;
+      if (odo != null && d.baselineMeters != null) {
+        const since = (odo - d.baselineMeters) / METERS_PER_UNIT;
+        if (since >= d.interval) { isDue = true; atText = `${Math.round(odo / METERS_PER_UNIT).toLocaleString()} ${UNITS}`; }
+      }
+    }
+
+    if (isDue) {
+      dueCustom.push({ label: d.label || "Reminder", device: d.deviceName || d.deviceId, at: atText });
+      // reset baseline + log history
+      if (!d.history) d.history = [];
+      const odo = odometerByDevice ? odometerByDevice[d.deviceId] : null;
+      d.history.push({ date: new Date().toISOString(), odoMeters: d.type === "mi" ? odo : null });
+      if (d.type === "mi" && odo != null) d.baselineMeters = odo;
+      d.baselineDate = new Date().toISOString();
+      const entity = { id: rec.id, addInId: CUSTOM_ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details: d };
+      await client.call("Set", { typeName: "AddInData", entity });
+    }
+  }
+
+  if (dueCustom.length > 0) {
+    const to = account.emailTo;
+    if (to) {
+      const lines = dueCustom.map((c) => `\u2022 ${c.device} — ${c.label}${c.at ? " (" + c.at + ")" : ""}`);
+      const body = [
+        `The following custom maintenance reminder(s) are due:`,
+        ``,
+        ...lines,
+        ``,
+        `Counters have been reset automatically.`,
+        ``,
+        `— Automated reminder from Dynasty Communications fleet monitoring`,
+      ].join("\n");
+      await transporter.sendMail({
+        from: EMAIL_FROM,
+        to,
+        subject: `Maintenance due: ${dueCustom.length} custom reminder(s)${label ? " — " + label : ""}`,
+        text: body,
+      });
+      console.log(`  Custom reminder email sent to ${to} (${dueCustom.length})`);
+    } else {
+      console.log(`  ${dueCustom.length} custom reminder(s) due but no email set`);
+    }
+  } else {
+    console.log(`  No custom reminders due.`);
   }
 }
 
