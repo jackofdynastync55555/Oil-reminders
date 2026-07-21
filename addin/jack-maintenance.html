@@ -114,13 +114,18 @@ geotab.addin.jackMaintenance = function () {
         deviceSearch:{id:d.id}, diagnosticSearch:{id:"DiagnosticOdometerAdjustmentId"}, fromDate:now, toDate:now
       }}];
     });
+    if (!calls.length) return Promise.resolve({});
     return multiCall(calls).then(function (rs) {
       var m = {}; rs.forEach(function (r,i){ m[devices[i].id] = (r&&r.length&&r[0].data!=null)?r[0].data:null; }); return m;
+    }).catch(function (e) {
+      console.warn("odometer multiCall failed:", e && e.message);
+      var m = {}; devices.forEach(function (d){ m[d.id] = null; }); return m;
     });
   }
-  // Faults with per-fault detail retained, grouped per device
+  // Faults with per-fault detail retained, grouped per device.
+  // Capped result count + timeout so a heavy history can't hang the dashboard.
   function getFaults(devices) {
-    return apiCall("Get", { typeName:"FaultData", search:{ fromDate:daysAgo(FAULT_LOOKBACK_DAYS), toDate:new Date().toISOString() } })
+    var call = apiCall("Get", { typeName:"FaultData", resultsLimit: 5000, search:{ fromDate:daysAgo(FAULT_LOOKBACK_DAYS), toDate:new Date().toISOString() } })
       .then(function (faults) {
         var active = faults.filter(function (f) {
           var a = f.faultState ? (f.faultState==="Active"||f.faultState==="PendingAndActive") : true;
@@ -144,6 +149,16 @@ geotab.addin.jackMaintenance = function () {
         });
         return by;
       });
+    // If faults are slow/unavailable, don't block the dashboard — return empty after 15s.
+    var timeout = new Promise(function (resolve) {
+      setTimeout(function () { resolve({ __timedOut: true }); }, 15000);
+    });
+    return Promise.race([call, timeout]).then(function (r) {
+      if (r && r.__timedOut) { console.warn("FaultData timed out — showing without faults"); return {}; }
+      return r;
+    }).catch(function (e) {
+      console.warn("FaultData failed:", e && e.message); return {};
+    });
   }
   // Resolve diagnostic names for the codes we actually have (cached)
   var diagNameCache = {};
@@ -471,14 +486,15 @@ geotab.addin.jackMaintenance = function () {
 
   // ---- orchestration -------------------------------------------------
   var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{} };
+  function safe(p, fallback) { return p.then(function (v){ return v; }).catch(function (e){ console.warn("call failed:", e&&e.message); return fallback; }); }
   function reloadAll() {
     healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Loading fleet…</div>';
     getDevices().then(function (devices) {
       cache.devices = devices;
-      return Promise.all([ getOdometers(devices), getFaults(devices), getOilState() ]);
+      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}) ]);
     }).then(function (res) {
       cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2];
-      return resolveDiagnostics(cache.faultMap);
+      return safe(resolveDiagnostics(cache.faultMap), undefined);
     }).then(function () {
       renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap);
       renderOil(cache.devices, cache.odoMap, cache.oilMap);
