@@ -123,6 +123,99 @@ geotab.addin.jackMaintenance = function () {
       var m = {}; devices.forEach(function (d){ m[d.id] = null; }); return m;
     });
   }
+
+  // Sensors: recent StatusData per device, matched to tire pressure (per corner),
+  // fuel level, and engine RPM by DIAGNOSTIC NAME (works whether ids are KnownIds
+  // or GUIDs). Returns { deviceId: { tires:{fl,fr,rl,rr}, fuel, rpm, diagValues:{id:val} } }
+  var diagMetaCache = {}; // id -> { name, unit } for status diagnostics we've seen
+  function classifyTireCorner(name) {
+    var n = name.toLowerCase();
+    if (!/tire|tyre|pressure/.test(n)) return null;
+    var front = /front|frnt|\bf\b|steer/.test(n), rear = /rear|\br\b|drive|tag/.test(n);
+    var left = /left|\blf\b|\blr\b|\bl\b|driver/.test(n), right = /right|\brf\b|\brr\b|\br\b|pass/.test(n);
+    // position abbreviations
+    if (/\blf\b|front.*left|left.*front/.test(n)) return "fl";
+    if (/\brf\b|front.*right|right.*front/.test(n)) return "fr";
+    if (/\blr\b|rear.*left|left.*rear/.test(n)) return "rl";
+    if (/\brr\b|rear.*right|right.*rear/.test(n)) return "rr";
+    if (front && left) return "fl";
+    if (front && right) return "fr";
+    if (rear && left) return "rl";
+    if (rear && right) return "rr";
+    return "generic";
+  }
+  function getSensors(devices) {
+    var from = daysAgo(2), to = new Date().toISOString();
+    // Pull the recent StatusData window per device (all diagnostics), then classify by name.
+    var calls = devices.map(function (d) {
+      return ["Get", { typeName:"StatusData", resultsLimit: 200, search:{
+        deviceSearch:{id:d.id}, fromDate:from, toDate:to
+      }}];
+    });
+    if (!calls.length) return Promise.resolve({});
+    return multiCall(calls).then(function (rs) {
+      // Collect diagnostic ids we need names for
+      var needNames = {};
+      rs.forEach(function (arr) {
+        (arr||[]).forEach(function (sd) {
+          var id = sd.diagnostic && sd.diagnostic.id;
+          if (id && !diagMetaCache[id]) needNames[id] = true;
+        });
+      });
+      var ids = Object.keys(needNames);
+      var namePromise = ids.length
+        ? multiCall(ids.map(function (id){ return ["Get", { typeName:"Diagnostic", search:{ id:id } }]; }))
+            .then(function (drs) {
+              drs.forEach(function (dr, i) {
+                var d0 = dr && dr[0];
+                diagMetaCache[ids[i]] = { name: (d0 && (d0.name||d0.code)) || ids[i], unit: (d0 && d0.unitOfMeasure) || "" };
+              });
+            }).catch(function(){})
+        : Promise.resolve();
+
+      return namePromise.then(function () {
+        var out = {};
+        rs.forEach(function (arr, i) {
+          var did = devices[i].id;
+          var latest = {}; // diagId -> {value, when}
+          (arr||[]).forEach(function (sd) {
+            var id = sd.diagnostic && sd.diagnostic.id; if (!id) return;
+            var when = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
+            if (!latest[id] || when > latest[id].when) latest[id] = { value: sd.data, when: when };
+          });
+          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null };
+          Object.keys(latest).forEach(function (id) {
+            var meta = diagMetaCache[id] || { name:id };
+            var nm = (meta.name||"").toLowerCase();
+            var val = latest[id].value;
+            var corner = classifyTireCorner(meta.name||"");
+            if (corner) {
+              // Geotab reports tire pressure already in PSI for this fleet (verified in Asset > Maintenance)
+              if (val != null && val < 200) info.tires[corner] = val;
+            } else if (/fuel.*level|level.*fuel/.test(nm) || nm === "fuel level") {
+              info.fuel = val; // percentage
+            } else if (/engine speed|\brpm\b|revolution/.test(nm)) {
+              info.rpm = val;
+            } else if (/electrical system rating|\besr\b/.test(nm)) {
+              info.esr = val; // 0-100 %
+            } else if (/battery|voltage/.test(nm)) {
+              info.battery = val; // volts
+            } else if (/coolant/.test(nm)) {
+              // coolant temp may arrive in C; convert if it looks metric (< 90 while engine warm is ambiguous, so store raw + flag)
+              info.coolant = val; // display handles unit
+            } else if (/engine hour/.test(nm)) {
+              info.engineHours = val;
+            }
+          });
+          out[did] = info;
+        });
+        return out;
+      });
+    }).catch(function (e) {
+      console.warn("sensors multiCall failed:", e && e.message);
+      return {};
+    });
+  }
   // Faults with per-fault detail retained, grouped per device.
   // Capped result count + timeout so a heavy history can't hang the dashboard.
   function getFaults(devices) {
@@ -199,7 +292,7 @@ geotab.addin.jackMaintenance = function () {
   }
 
   // ---- health scoring ------------------------------------------------
-  function scoreVehicle(device, odoMeters, faults, oil) {
+  function scoreVehicle(device, odoMeters, faults, oil, sensors) {
     var reasons = [], level = "green";
     function bump(t){ if(t==="red") level="red"; else if(t==="amber"&&level!=="red") level="amber"; }
     if (faults && faults.total>0) {
@@ -216,15 +309,46 @@ geotab.addin.jackMaintenance = function () {
         else if (remaining<=interval*0.15){ bump("amber"); reasons.push("oil due soon"); }
       }
     }
+    // Sensor-driven flags
+    if (sensors) {
+      // Tire pressure: any corner low
+      if (sensors.tires) {
+        var corners = ["fl","fr","rl","rr"], lowRed = false, lowAmber = false;
+        corners.forEach(function (k) {
+          var p = sensors.tires[k];
+          if (p == null) return;
+          if (p < 28) lowRed = true; else if (p < 32) lowAmber = true;
+        });
+        if (lowRed){ bump("red"); reasons.push("low tire pressure"); }
+        else if (lowAmber){ bump("amber"); reasons.push("tire pressure marginal"); }
+      }
+      // Battery voltage (12V system): <12.2 amber, <11.8 red
+      if (sensors.battery != null) {
+        if (sensors.battery < 11.8){ bump("red"); reasons.push("low battery voltage"); }
+        else if (sensors.battery < 12.2){ bump("amber"); reasons.push("battery voltage low"); }
+      }
+      // ESR (Electrical System Rating, 0-100 Optimal): <40 red, <60 amber
+      if (sensors.esr != null) {
+        if (sensors.esr < 40){ bump("red"); reasons.push("poor electrical rating"); }
+        else if (sensors.esr < 60){ bump("amber"); reasons.push("electrical rating low"); }
+      }
+      // Coolant temp: treat >=240F red, >=225F amber (values look like F on this fleet)
+      if (sensors.coolant != null) {
+        var ct = sensors.coolant;
+        if (ct >= 240){ bump("red"); reasons.push("coolant temp high"); }
+        else if (ct >= 225){ bump("amber"); reasons.push("coolant temp elevated"); }
+      }
+    }
     if (odoMeters==null){ bump("amber"); reasons.push("no recent data"); }
-    return { level:level, reasons:reasons, faults:faults, oil:oilInfo, odoMeters:odoMeters };
+    return { level:level, reasons:reasons, faults:faults, oil:oilInfo, odoMeters:odoMeters, sensors:sensors };
   }
 
   // ---- FLEET HEALTH render -------------------------------------------
-  function renderHealth(devices, odoMap, faultMap, oilMap) {
+  function renderHealth(devices, odoMap, faultMap, oilMap, sensorMap) {
     if (!healthEl) return;
+    sensorMap = sensorMap || {};
     var scored = devices.map(function (d) {
-      return { device:d, health:scoreVehicle(d, odoMap[d.id], faultMap[d.id], oilMap[d.id]) };
+      return { device:d, health:scoreVehicle(d, odoMap[d.id], faultMap[d.id], oilMap[d.id], sensorMap[d.id]) };
     });
     var order = { red:0, amber:1, green:2 };
     scored.sort(function (a,b) {
@@ -243,7 +367,7 @@ geotab.addin.jackMaintenance = function () {
 
     scored.forEach(function (s, idx) {
       if (idx>0 && scored[idx-1].health.level!=="green" && s.health.level==="green") html += sectionLabel("Healthy");
-      html += assetCard(s.device, s.health);
+      html += assetCard(s.device, s.health, sensorMap[s.device.id]);
     });
     if (!devices.length) html = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">No assets found.</div>';
     healthEl.innerHTML = html;
@@ -255,7 +379,7 @@ geotab.addin.jackMaintenance = function () {
       var head = card.querySelector('[data-role="head"]');
       head.addEventListener("click", function () {
         expandedAsset = (expandedAsset===s.device.id) ? null : s.device.id;
-        renderHealth(devices, odoMap, faultMap, oilMap);
+        renderHealth(devices, odoMap, faultMap, oilMap, sensorMap);
       });
     });
   }
@@ -270,7 +394,7 @@ geotab.addin.jackMaintenance = function () {
   }
   function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g,"_"); }
 
-  function assetCard(device, h) {
+  function assetCard(device, h, sensors) {
     var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:C.green;
     var chips = "";
     if (h.faults && h.faults.total>0) {
@@ -281,14 +405,18 @@ geotab.addin.jackMaintenance = function () {
       if (h.oil.remaining<=0) chips += pill("oil overdue", C.redBg, C.red)+" ";
       else if (h.oil.remaining<=h.oil.interval*0.15) chips += pill("oil "+fmt(h.oil.remaining)+" "+UNITS, C.amberBg, C.amber)+" ";
     }
+    // low-tire chip if any corner reads low
+    if (sensors && sensors.tires) {
+      var low = ["fl","fr","rl","rr"].some(function (k){ return sensors.tires[k]!=null && sensors.tires[k] < 30; });
+      if (low) chips += pill("low tire", C.redBg, C.red)+" ";
+    }
     if (h.odoMeters==null) chips += pill("no data", C.track, C.faint)+" ";
     if (!chips) chips = pill("healthy", C.greenBg, C.green);
 
     var odoTxt = h.odoMeters!=null ? fmt(h.odoMeters/METERS_PER_UNIT)+" "+UNITS : "—";
     var isOpen = expandedAsset===device.id;
     var caret = isOpen ? "\u25be" : "\u25b8";
-
-    var detail = isOpen ? detailPanel(device, h) : "";
+    var detail = isOpen ? detailPanel(device, h, sensors) : "";
 
     return '<div id="asset-'+cssId(device.id)+'" style="background:'+C.card+'; border:1px solid '+C.line+'; border-left:4px solid '+edge+'; border-radius:10px; margin-bottom:10px; box-shadow:'+C.shadow+'; overflow:hidden;">' +
       '<div data-role="head" style="padding:14px 16px; cursor:pointer;">' +
@@ -305,10 +433,10 @@ geotab.addin.jackMaintenance = function () {
     '</div>';
   }
 
-  // ---- detail panel: car diagram + fault list ------------------------
-  function detailPanel(device, h) {
+  // ---- detail panel: car diagram + fault list + readouts -------------
+  function detailPanel(device, h, sensors) {
     var sys = systemsFromFaults(h.faults);
-    var carSvg = carDiagram(h.level, sys, h.oil);
+    var carSvg = carDiagram(h.level, sys, sensors);
     var faultList = "";
     if (h.faults && h.faults.items.length) {
       faultList = h.faults.items.map(function (it) {
@@ -327,72 +455,109 @@ geotab.addin.jackMaintenance = function () {
       faultList = '<div style="font-size:13px; color:'+C.soft+'; padding:10px 0;">No active fault codes.</div>';
     }
 
-    var oilLine = "";
+    // Readout rows: fuel, RPM, oil
+    function readRow(label, valueHtml) {
+      return '<div style="display:flex; justify-content:space-between; font-size:12.5px; color:'+C.soft+'; padding:8px 0; border-top:1px solid '+C.line+';">' +
+        '<span>'+label+'</span>'+valueHtml+'</div>';
+    }
+    var rows = "";
+    if (sensors && sensors.fuel != null) {
+      var fc = sensors.fuel <= 15 ? C.amber : C.ink;
+      rows += readRow("Fuel level", '<span style="color:'+fc+'; font-weight:600;">'+Math.round(sensors.fuel)+'%</span>');
+    }
+    if (sensors && sensors.esr != null) {
+      var ec = sensors.esr < 40 ? C.red : (sensors.esr < 60 ? C.amber : C.green);
+      rows += readRow("Electrical rating (ESR)", '<span style="color:'+ec+'; font-weight:600;">'+Math.round(sensors.esr)+'%</span>');
+    }
+    if (sensors && sensors.battery != null) {
+      var bc = sensors.battery < 11.8 ? C.red : (sensors.battery < 12.2 ? C.amber : C.ink);
+      rows += readRow("Battery voltage", '<span style="color:'+bc+'; font-weight:600;">'+sensors.battery.toFixed(1)+' V</span>');
+    }
+    if (sensors && sensors.coolant != null) {
+      var cc = sensors.coolant >= 240 ? C.red : (sensors.coolant >= 225 ? C.amber : C.ink);
+      rows += readRow("Coolant temp", '<span style="color:'+cc+'; font-weight:600;">'+Math.round(sensors.coolant)+'\u00b0</span>');
+    }
+    if (sensors && sensors.rpm != null) {
+      rows += readRow("Engine RPM", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.rpm)+'</span>');
+    }
+    if (sensors && sensors.engineHours != null) {
+      rows += readRow("Engine hours", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.engineHours)+' h</span>');
+    }
     if (h.oil) {
       var oc = h.oil.remaining<=0?C.red:(h.oil.remaining<=h.oil.interval*0.15?C.amber:C.green);
-      oilLine = '<div style="display:flex; justify-content:space-between; font-size:12.5px; color:'+C.soft+'; padding:8px 0; border-top:1px solid '+C.line+';">' +
-        '<span>Oil change</span><span style="color:'+oc+'; font-weight:600;">' +
-        (h.oil.remaining<=0 ? "Overdue by "+fmt(-h.oil.remaining)+" "+UNITS : fmt(h.oil.remaining)+" "+UNITS+" remaining") +
-        '</span></div>';
+      rows += readRow("Oil change", '<span style="color:'+oc+'; font-weight:600;">' +
+        (h.oil.remaining<=0 ? "Overdue by "+fmt(-h.oil.remaining)+" "+UNITS : fmt(h.oil.remaining)+" "+UNITS+" remaining")+'</span>');
     }
 
     return '<div style="padding:4px 16px 16px; background:'+C.card2+'; border-top:1px solid '+C.line+';">' +
       '<div style="display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start;">' +
-        '<div style="flex:0 0 auto; width:200px; max-width:100%;">'+carSvg+'</div>' +
+        '<div style="flex:0 0 auto; width:210px; max-width:100%;">'+carSvg+'</div>' +
         '<div style="flex:1; min-width:220px;">' +
           '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:12px 0 4px;">Active faults</div>' +
-          faultList + oilLine +
+          faultList + rows +
         '</div>' +
       '</div>' +
     '</div>';
   }
 
-  // Top-down pickup drawing. Systems light up when they have fault weight.
-  function carDiagram(level, sys, oil) {
+  // Top-down pickup with four individual tires (PSI) and system zones.
+  function carDiagram(level, sys, sensors) {
     var bodyFill = level==="red"?C.redBg:level==="amber"?C.amberBg:C.greenBg;
     var bodyStroke = level==="red"?C.red:level==="amber"?C.amber:C.green;
     function zoneColor(v) { return v>=2 ? C.red : v>=1 ? C.amber : "transparent"; }
     function zoneStroke(v) { return v>=1 ? (v>=2?C.red:C.amber) : C.line; }
-    var tireBad = sys.tires>=1;
-    var tireFill = sys.tires>=2?C.red:sys.tires>=1?C.amber:C.track;
 
-    // marker helper
-    function marker(cx, cy, v, label) {
+    var tires = (sensors && sensors.tires) || {fl:null,fr:null,rl:null,rr:null};
+    function tireColor(psi) {
+      if (psi == null) return C.faint;         // no data
+      if (psi < 30) return C.red;              // low
+      if (psi < 34) return C.amber;            // marginal
+      return C.green;                          // good
+    }
+    function tirePsiTxt(psi) { return psi == null ? "\u2013" : Math.round(psi)+""; }
+
+    // A tire = rect + psi label beside it
+    function tire(x, y, psi, labelX, anchor) {
+      var col = tireColor(psi);
+      return '<rect x="'+x+'" y="'+y+'" width="16" height="42" rx="6" fill="'+col+'"/>' +
+        '<text x="'+labelX+'" y="'+(y+26)+'" font-size="11" font-weight="700" text-anchor="'+anchor+'" fill="'+C.ink+'">'+tirePsiTxt(psi)+'</text>';
+    }
+    function marker(cx, cy, v) {
       if (v<1) return "";
       var c = v>=2?C.red:C.amber;
-      return '<circle cx="'+cx+'" cy="'+cy+'" r="11" fill="'+c+'"/>' +
-             '<text x="'+cx+'" y="'+(cy+4)+'" font-size="12" font-weight="700" text-anchor="middle" fill="#fff">!</text>';
+      return '<circle cx="'+cx+'" cy="'+cy+'" r="10" fill="'+c+'"/>' +
+             '<text x="'+cx+'" y="'+(cy+4)+'" font-size="11" font-weight="700" text-anchor="middle" fill="#fff">!</text>';
     }
 
-    return '<svg viewBox="0 0 200 320" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vehicle status diagram">' +
+    var anyTireData = ["fl","fr","rl","rr"].some(function (k){ return tires[k]!=null; });
+
+    return '<svg viewBox="0 0 210 340" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vehicle status diagram">' +
+      '<text x="105" y="16" font-size="11" text-anchor="middle" fill="'+C.soft+'">FRONT</text>' +
       // body
-      '<rect x="42" y="30" width="116" height="260" rx="26" fill="'+bodyFill+'" stroke="'+bodyStroke+'" stroke-width="3"/>' +
-      // cab / windshield
-      '<rect x="58" y="70" width="84" height="60" rx="12" fill="'+C.card+'" stroke="'+C.line+'" stroke-width="2"/>' +
+      '<rect x="52" y="26" width="106" height="266" rx="24" fill="'+bodyFill+'" stroke="'+bodyStroke+'" stroke-width="3"/>' +
+      // cab window
+      '<rect x="66" y="92" width="78" height="56" rx="10" fill="'+C.card+'" stroke="'+C.line+'" stroke-width="2"/>' +
       // bed line
-      '<line x1="58" y1="180" x2="142" y2="180" stroke="'+C.line+'" stroke-width="2"/>' +
-      // tires (4 corners)
-      '<rect x="26" y="70" width="16" height="40" rx="6" fill="'+(tireBad?tireFill:C.faint)+'"/>' +
-      '<rect x="158" y="70" width="16" height="40" rx="6" fill="'+(tireBad?tireFill:C.faint)+'"/>' +
-      '<rect x="26" y="210" width="16" height="40" rx="6" fill="'+(tireBad?tireFill:C.faint)+'"/>' +
-      '<rect x="158" y="210" width="16" height="40" rx="6" fill="'+(tireBad?tireFill:C.faint)+'"/>' +
-      // labels
-      '<text x="100" y="52" font-size="11" text-anchor="middle" fill="'+C.soft+'">FRONT</text>' +
-      // engine zone (front center)
-      '<rect x="70" y="36" width="60" height="26" rx="7" fill="'+zoneColor(sys.engine)+'" stroke="'+zoneStroke(sys.engine)+'" stroke-width="1.5"/>' +
-      '<text x="100" y="53" font-size="9" text-anchor="middle" fill="'+C.soft+'">ENGINE</text>' +
-      // transmission (center)
-      '<rect x="78" y="150" width="44" height="22" rx="6" fill="'+zoneColor(sys.transmission)+'" stroke="'+zoneStroke(sys.transmission)+'" stroke-width="1.5"/>' +
-      '<text x="100" y="165" font-size="8" text-anchor="middle" fill="'+C.soft+'">TRANS</text>' +
-      // brakes (rear)
-      '<rect x="74" y="250" width="52" height="22" rx="6" fill="'+zoneColor(sys.brakes)+'" stroke="'+zoneStroke(sys.brakes)+'" stroke-width="1.5"/>' +
-      '<text x="100" y="265" font-size="8" text-anchor="middle" fill="'+C.soft+'">BRAKES</text>' +
-      // markers
-      marker(100,49,sys.engine) + marker(100,161,sys.transmission) + marker(100,261,sys.brakes) +
-      (tireBad? marker(34,90,sys.tires)+marker(166,230,sys.tires) : "") +
+      '<line x1="66" y1="196" x2="144" y2="196" stroke="'+C.line+'" stroke-width="2"/>' +
+      // four tires with PSI (labels pushed outside the body so nothing overlaps)
+      tire(36, 70, tires.fl, 26, "end") +
+      tire(158, 70, tires.fr, 184, "start") +
+      tire(36, 228, tires.rl, 26, "end") +
+      tire(158, 228, tires.rr, 184, "start") +
+      // engine zone (top center) — label ABOVE marker area, no overlap
+      '<rect x="72" y="34" width="66" height="24" rx="7" fill="'+zoneColor(sys.engine)+'" stroke="'+zoneStroke(sys.engine)+'" stroke-width="1.5"/>' +
+      '<text x="105" y="49" font-size="9" font-weight="600" text-anchor="middle" fill="'+C.soft+'">ENGINE</text>' +
+      // transmission zone (center)
+      '<rect x="80" y="162" width="50" height="22" rx="6" fill="'+zoneColor(sys.transmission)+'" stroke="'+zoneStroke(sys.transmission)+'" stroke-width="1.5"/>' +
+      '<text x="105" y="177" font-size="8" font-weight="600" text-anchor="middle" fill="'+C.soft+'">TRANS</text>' +
+      // brakes zone (rear)
+      '<rect x="76" y="258" width="58" height="22" rx="6" fill="'+zoneColor(sys.brakes)+'" stroke="'+zoneStroke(sys.brakes)+'" stroke-width="1.5"/>' +
+      '<text x="105" y="273" font-size="8" font-weight="600" text-anchor="middle" fill="'+C.soft+'">BRAKES</text>' +
+      // fault markers sit to the RIGHT of each zone so they never cover the label
+      marker(150,46,sys.engine) + marker(140,173,sys.transmission) + marker(142,269,sys.brakes) +
       '</svg>' +
-      '<div style="text-align:center; font-size:11.5px; color:'+C.soft+'; margin-top:6px;">' +
-        (level==="green" ? "No system faults detected" : "Highlighted areas need attention") +
+      '<div style="text-align:center; font-size:11px; color:'+C.soft+'; margin-top:6px;">' +
+        (anyTireData ? "Tire PSI shown per corner" : "No tire pressure data for this asset") +
       '</div>';
   }
 
@@ -492,19 +657,19 @@ geotab.addin.jackMaintenance = function () {
   }
 
   // ---- orchestration -------------------------------------------------
-  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{} };
+  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{}, sensorMap:{} };
   function safe(p, fallback) { return Promise.resolve().then(function(){ return p; }).then(function (v){ return v; }).catch(function (e){ console.warn("call failed:", e&&e.message); return fallback; }); }
   function reloadAll() {
     if (!healthEl) return;
     healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Loading fleet…</div>';
     safe(getDevices(), []).then(function (devices) {
       cache.devices = devices;
-      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}) ]);
+      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}) ]);
     }).then(function (res) {
-      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2];
+      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3];
       return safe(resolveDiagnostics(cache.faultMap), undefined);
     }).then(function () {
-      renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap);
+      renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
       if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
     }).catch(function (err) {
       if (healthEl) healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Couldn\u2019t load data: '+(err&&err.message?err.message:err)+'</div>';
@@ -524,7 +689,7 @@ geotab.addin.jackMaintenance = function () {
         var tb = $("themeBtn");
         if (tb) tb.addEventListener("click", function () {
           theme = theme==="dark"?"light":"dark"; applyTheme();
-          renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap);
+          renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
           if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
         });
         document.querySelectorAll("#tabs button").forEach(function (b) {
