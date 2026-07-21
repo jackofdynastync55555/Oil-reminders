@@ -61,6 +61,7 @@ geotab.addin.jackMaintenance = function () {
 
   // ---- utils ---------------------------------------------------------
   function toast(msg) {
+    if (!toastEl) return;
     toastEl.textContent = msg;
     toastEl.style.background = C.ink; toastEl.style.color = C.page;
     toastEl.style.opacity = "1"; toastEl.style.transform = "translateX(-50%) translateY(0)";
@@ -221,6 +222,7 @@ geotab.addin.jackMaintenance = function () {
 
   // ---- FLEET HEALTH render -------------------------------------------
   function renderHealth(devices, odoMap, faultMap, oilMap) {
+    if (!healthEl) return;
     var scored = devices.map(function (d) {
       return { device:d, health:scoreVehicle(d, odoMap[d.id], faultMap[d.id], oilMap[d.id]) };
     });
@@ -396,6 +398,7 @@ geotab.addin.jackMaintenance = function () {
 
   // ---- OIL tab (editable, unchanged logic) ---------------------------
   function renderOil(devices, odoMap, oilMap) {
+    if (!oilEl) return;
     var counts = { total:0, ok:0, soon:0, due:0 };
     var frag = document.createElement("div");
     devices.forEach(function (device) {
@@ -457,20 +460,24 @@ geotab.addin.jackMaintenance = function () {
   }
 
   // ---- theme + tabs --------------------------------------------------
+  function $(id) { return document.getElementById(id); }
   function applyTheme() {
     C = THEMES[theme];
-    bodyEl.style.background = C.page; bodyEl.style.color = C.ink;
-    document.getElementById("appSub").style.color = C.soft;
-    var tb = document.getElementById("themeBtn");
-    tb.textContent = theme==="dark" ? "Light" : "Dark";
-    tb.style.background = C.card; tb.style.border = "1px solid "+C.line; tb.style.color = C.ink;
-    var rb = document.getElementById("refreshBtn");
-    rb.style.background = C.card; rb.style.border = "1px solid "+C.line; rb.style.color = C.brand;
-    var tabsWrap = document.getElementById("tabs");
-    tabsWrap.style.borderBottom = "1px solid "+C.line;
+    if (bodyEl) { bodyEl.style.background = C.page; bodyEl.style.color = C.ink; }
+    var sub = $("appSub"); if (sub) sub.style.color = C.soft;
+    var tb = $("themeBtn");
+    if (tb) {
+      tb.textContent = theme==="dark" ? "Light" : "Dark";
+      tb.style.background = C.card; tb.style.border = "1px solid "+C.line; tb.style.color = C.ink;
+    }
+    var rb = $("refreshBtn");
+    if (rb) { rb.style.background = C.card; rb.style.border = "1px solid "+C.line; rb.style.color = C.brand; }
+    var tabsWrap = $("tabs");
+    if (tabsWrap) tabsWrap.style.borderBottom = "1px solid "+C.line;
     styleTabs();
   }
   function styleTabs() {
+    if (!healthEl) return;
     var active = healthEl.style.display!=="none" ? "health" : "oil";
     document.querySelectorAll("#tabs button").forEach(function (b) {
       var on = b.getAttribute("data-tab")===active;
@@ -479,17 +486,18 @@ geotab.addin.jackMaintenance = function () {
     });
   }
   function switchTab(name) {
-    healthEl.style.display = name==="health"?"":"none";
-    oilEl.style.display = name==="oil"?"":"none";
+    if (healthEl) healthEl.style.display = name==="health"?"":"none";
+    if (oilEl) oilEl.style.display = name==="oil"?"":"none";
     styleTabs();
   }
 
   // ---- orchestration -------------------------------------------------
   var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{} };
-  function safe(p, fallback) { return p.then(function (v){ return v; }).catch(function (e){ console.warn("call failed:", e&&e.message); return fallback; }); }
+  function safe(p, fallback) { return Promise.resolve().then(function(){ return p; }).then(function (v){ return v; }).catch(function (e){ console.warn("call failed:", e&&e.message); return fallback; }); }
   function reloadAll() {
+    if (!healthEl) return;
     healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Loading fleet…</div>';
-    getDevices().then(function (devices) {
+    safe(getDevices(), []).then(function (devices) {
       cache.devices = devices;
       return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}) ]);
     }).then(function (res) {
@@ -497,31 +505,35 @@ geotab.addin.jackMaintenance = function () {
       return safe(resolveDiagnostics(cache.faultMap), undefined);
     }).then(function () {
       renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap);
-      renderOil(cache.devices, cache.odoMap, cache.oilMap);
+      if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
     }).catch(function (err) {
-      healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Couldn\u2019t load data: '+(err&&err.message?err.message:err)+'</div>';
+      if (healthEl) healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Couldn\u2019t load data: '+(err&&err.message?err.message:err)+'</div>';
     });
   }
 
   return {
     initialize: function (freshApi, state, cb) {
-      api = freshApi;
-      bodyEl = document.getElementById("body"); rootEl = document.getElementById("root");
-      healthEl = document.getElementById("health"); oilEl = document.getElementById("oil");
-      toastEl = document.getElementById("toast");
-      document.getElementById("refreshBtn").addEventListener("click", reloadAll);
-      document.getElementById("themeBtn").addEventListener("click", function () {
-        theme = theme==="dark"?"light":"dark"; applyTheme();
-        renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap);
-        renderOil(cache.devices, cache.odoMap, cache.oilMap);
-      });
-      document.querySelectorAll("#tabs button").forEach(function (b) {
-        b.addEventListener("click", function () { switchTab(b.getAttribute("data-tab")); });
-      });
-      applyTheme();
-      cb();
+      // Signal ready FIRST so MyGeotab never hangs on a spinner, even if setup below hiccups.
+      try { cb && cb(); } catch (e) {}
+      try {
+        api = freshApi;
+        bodyEl = document.getElementById("body"); rootEl = document.getElementById("root");
+        healthEl = document.getElementById("health"); oilEl = document.getElementById("oil");
+        toastEl = document.getElementById("toast");
+        var rb = $("refreshBtn"); if (rb) rb.addEventListener("click", reloadAll);
+        var tb = $("themeBtn");
+        if (tb) tb.addEventListener("click", function () {
+          theme = theme==="dark"?"light":"dark"; applyTheme();
+          renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap);
+          if (oilEl) renderOil(cache.devices, cache.odoMap, cache.oilMap);
+        });
+        document.querySelectorAll("#tabs button").forEach(function (b) {
+          b.addEventListener("click", function () { switchTab(b.getAttribute("data-tab")); });
+        });
+        applyTheme();
+      } catch (e) { console.warn("init setup error:", e && e.message); }
     },
-    focus: function (freshApi) { api = freshApi; applyTheme(); reloadAll(); },
+    focus: function (freshApi) { api = freshApi; try { applyTheme(); } catch(e){} reloadAll(); },
     blur: function () {}
   };
 };
