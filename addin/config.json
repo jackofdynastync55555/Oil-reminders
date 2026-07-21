@@ -1,13 +1,13 @@
 {
-  "name": "Oil Change Reminders",
-  "supportEmail": "support@dynastycommunications.com",
-  "version": "1.0.0",
+  "name": "DynastyJack Maintenance",
+  "supportEmail": "support@dynastync.com",
+  "version": "2.0.0",
   "items": [
     {
-      "url": "https://jackofdynastync55555.github.io/Oil-reminders/addin/oil-reminders.html",
-      "path": "ActivityLink/",
+      "url": "https://jackofdynastync55555.github.io/Oil-reminders/addin/jack-maintenance.html",
+      "path": "MaintenanceLink/",
       "menuName": {
-        "en": "Oil Change Reminders"
+        "en": "DynastyJack Maintenance"
       }
     }
   ],
