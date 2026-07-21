@@ -176,7 +176,11 @@ geotab.addin.oilChangeReminders = function () {
         det.lastNotifiedMeters = odoMeters;
         det.lastNotifiedDate = new Date().toISOString();
         det.deviceName = device.name;
-        persist(det).then(function () { toast(device.name + " marked serviced"); load(); });
+        // Flag for a confirmation email on the next daily run (no token needed).
+        det.emailPending = true;
+        det.emailPendingReason = "serviced";
+        det.emailPendingOdoMeters = odoMeters;
+        persist(det).then(function () { toast(device.name + " marked serviced \u2014 confirmation queued"); load(); });
       });
 
       listEl.appendChild(card);
