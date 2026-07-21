@@ -78,9 +78,23 @@ geotab.addin.jackMaintenance = function () {
   function dot(c) { return '<span style="display:inline-block; width:11px; height:11px; border-radius:50%; background:'+c+'; flex:none;"></span>'; }
 
   // ---- data ----------------------------------------------------------
+  // Only real GO-device vehicles: active, with a valid hardware serial and a GO device type.
+  // Filters out manually-created test/placeholder assets and non-GO entries.
+  function isRealGoDevice(x) {
+    var active = !x.activeTo || new Date(x.activeTo) > new Date();
+    if (!active) return false;
+    var sn = (x.serialNumber || "").trim();
+    // Placeholder/custom assets have empty or all-zero serials
+    var hasSerial = sn.length > 0 && !/^0+$/.test(sn) && sn.toUpperCase() !== "NOSERIALNUMBER";
+    // deviceType for real units is a GoX/GO variant; custom assets are CustomVehicleDevice/CustomDevice/Untracked
+    var dt = (x.deviceType || "").toLowerCase();
+    var isCustom = dt.indexOf("custom") >= 0 || dt.indexOf("untracked") >= 0;
+    return hasSerial && !isCustom;
+  }
+
   function getDevices() {
     return apiCall("Get", { typeName: "Device" }).then(function (d) {
-      return d.filter(function (x) { return !x.activeTo || new Date(x.activeTo) > new Date(); });
+      return d.filter(isRealGoDevice);
     });
   }
   function getOilState() {
