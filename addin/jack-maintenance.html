@@ -226,24 +226,27 @@ geotab.addin.jackMaintenance = function () {
   // Geotab reports tire pressure in Pascals; convert to psi. (316000 Pa ≈ 45.8 psi)
   function paToPsi(v) { return v == null ? null : v * 0.000145038; }
   function getSensors(devices) {
-    // Use a SHORT window (last 24h) so results aren't truncated before the newest
-    // readings. Geotab returns StatusData oldest-first, so a wide window + a result
-    // cap can cut off the most recent values — a tight window avoids that.
-    var from = daysAgo(1), to = new Date().toISOString();
+    // 7-day window at a high row cap: wide enough that parked assets still report,
+    // and the cap is high enough the newest readings aren't truncated. We keep the
+    // newest value per diagnostic (by timestamp) below. Assets with NO data in 7
+    // days retry with a 30-day window and are flagged as "sitting".
+    var from = daysAgo(7), to = new Date().toISOString();
     var calls = devices.map(function (d) {
-      return ["Get", { typeName:"StatusData", resultsLimit: 2000, search:{
+      return ["Get", { typeName:"StatusData", resultsLimit: 5000, search:{
         deviceSearch:{id:d.id}, fromDate:from, toDate:to
       }}];
     });
     if (!calls.length) return Promise.resolve({});
+    var sittingDevices = {}; // deviceId -> true if no data in the primary 7-day window
     return multiCall(calls).then(function (rs) {
-      // For any device with NO rows in the last 24h (e.g. parked), retry with a 7-day window
-      var wideFrom = daysAgo(7);
+      // For any device with NO rows in the last 7 days (parked/sitting), retry with 30 days
+      var wideFrom = daysAgo(30);
       var retries = [], retryIdx = [];
       rs.forEach(function (arr, i) {
         if (!arr || arr.length === 0) {
+          sittingDevices[devices[i].id] = true; // no activity in 7 days = sitting
           retryIdx.push(i);
-          retries.push(["Get", { typeName:"StatusData", resultsLimit: 2000, search:{
+          retries.push(["Get", { typeName:"StatusData", resultsLimit: 5000, search:{
             deviceSearch:{id:devices[i].id}, fromDate:wideFrom, toDate:to
           }}]);
         }
@@ -282,7 +285,11 @@ geotab.addin.jackMaintenance = function () {
             var when = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
             if (!latest[id] || when > latest[id].when) latest[id] = { value: sd.data, when: when };
           });
-          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, idleFuel:null, _raw:[] };
+          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, idleFuel:null, sitting:!!sittingDevices[did], lastSeen:null, _raw:[] };
+          // newest timestamp across all diagnostics = last time the asset reported
+          Object.keys(latest).forEach(function (id) {
+            if (latest[id].when && (!info.lastSeen || latest[id].when > info.lastSeen)) info.lastSeen = latest[id].when;
+          });
           Object.keys(latest).forEach(function (id) {
             var meta = diagMetaCache[id] || { name:id };
             var nm = (meta.name||"").toLowerCase();
@@ -565,6 +572,11 @@ geotab.addin.jackMaintenance = function () {
     if (sensors && sensors.tires) {
       var low = ["fl","fr","rl","rr"].some(function (k){ return sensors.tires[k]!=null && sensors.tires[k] < 30; });
       if (low) chips += pill("low tire", C.redBg, C.red)+" ";
+    }
+    // "Sitting" tag if the asset hasn't reported in over 7 days
+    if (sensors && sensors.sitting) {
+      var daysAgoTxt = sensors.lastSeen ? Math.floor((Date.now()-sensors.lastSeen)/86400000)+"d" : "7d+";
+      chips += pill("sitting "+daysAgoTxt, C.track, C.amber)+" ";
     }
     if (h.odoMeters==null) chips += pill("no data", C.track, C.faint)+" ";
     if (!chips) chips = pill("healthy", C.greenBg, C.green);
