@@ -285,7 +285,7 @@ geotab.addin.jackMaintenance = function () {
             var when = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
             if (!latest[id] || when > latest[id].when) latest[id] = { value: sd.data, when: when };
           });
-          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, idleFuel:null, sitting:!!sittingDevices[did], lastSeen:null, _raw:[] };
+          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, idleFuel:null, idleFuelTrip:null, totalFuel:null, sitting:!!sittingDevices[did], lastSeen:null, _raw:[] };
           // newest timestamp across all diagnostics = last time the asset reported
           Object.keys(latest).forEach(function (id) {
             if (latest[id].when && (!info.lastSeen || latest[id].when > info.lastSeen)) info.lastSeen = latest[id].when;
@@ -301,8 +301,12 @@ geotab.addin.jackMaintenance = function () {
               if (psi != null && psi > 0 && psi < 200 && corner !== "generic") info.tires[corner] = psi;
             } else if (/engine oil life remaining|oil life/.test(nm)) {
               info.oilLife = val; // percentage remaining, from the vehicle's own monitor
+            } else if (/total fuel used while idling|total idle fuel/.test(nm)) {
+              info.idleFuel = val; // LIFETIME total idle fuel (liters) — preferred
             } else if (/idle.*fuel|fuel.*idle/.test(nm)) {
-              info.idleFuel = val; // total fuel used while idling (check before "fuel level")
+              if (info.idleFuel == null) info.idleFuelTrip = val; // trip idle fuel (fallback only)
+            } else if (/total fuel used \(since|total fuel used$/.test(nm)) {
+              info.totalFuel = val; // lifetime total fuel (liters), for idle %
             } else if (/fuel level/.test(nm)) {
               info.fuel = val; // percentage
             } else if (/engine speed|\brpm\b/.test(nm)) {
@@ -634,9 +638,18 @@ geotab.addin.jackMaintenance = function () {
     if (sensors && sensors.engineHours != null) {
       rows += readRow("Engine hours", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.engineHours)+' h</span>');
     }
-    if (sensors && sensors.idleFuel != null) {
-      var gal = sensors.idleFuel * 0.264172; // Geotab reports liters; convert to US gallons
-      rows += readRow("Fuel used idling", '<span style="color:'+C.ink+'; font-weight:600;">'+ (gal >= 100 ? fmt(gal) : gal.toFixed(1)) +' gal</span>');
+    var idleL = (sensors && sensors.idleFuel != null) ? sensors.idleFuel
+              : (sensors && sensors.idleFuelTrip != null ? sensors.idleFuelTrip : null);
+    if (idleL != null) {
+      var gal = idleL * 0.264172; // liters → US gallons
+      var isTrip = (sensors.idleFuel == null && sensors.idleFuelTrip != null);
+      var pctTxt = "";
+      if (!isTrip && sensors.totalFuel && sensors.totalFuel > 0) {
+        var idlePct = (sensors.idleFuel / sensors.totalFuel) * 100;
+        pctTxt = ' <span style="color:'+C.soft+'; font-weight:400;">('+idlePct.toFixed(1)+'% of total)</span>';
+      }
+      var label = isTrip ? "Fuel used idling (trip)" : "Fuel used idling (lifetime)";
+      rows += readRow(label, '<span style="color:'+C.ink+'; font-weight:600;">'+ (gal >= 10 ? fmt(gal) : gal.toFixed(1)) +' gal'+pctTxt+'</span>');
     }
     if (sensors && sensors.oilLife != null) {
       var olc = sensors.oilLife < 15 ? C.red : (sensors.oilLife < 30 ? C.amber : C.green);
@@ -721,59 +734,69 @@ geotab.addin.jackMaintenance = function () {
   function carDiagram(level, sys, sensors) {
     var bodyFill = level==="red"?C.redBg:level==="amber"?C.amberBg:C.greenBg;
     var bodyStroke = level==="red"?C.red:level==="amber"?C.amber:C.green;
-    function zoneColor(v) { return v>=2 ? C.red : v>=1 ? C.amber : "transparent"; }
-    function zoneStroke(v) { return v>=1 ? (v>=2?C.red:C.amber) : C.line; }
+
+    // Each system zone gets its OWN status color: green healthy, amber = warning
+    // fault weight, red = critical. This sits on top of the overall body tint.
+    function sysStatus(v) { return v>=2 ? "red" : v>=1 ? "amber" : "green"; }
+    function sysFill(v) {
+      var s = sysStatus(v);
+      return s==="red" ? C.red : s==="amber" ? C.amber : C.green;
+    }
+    function sysTextColor(v) {
+      // filled zones use white text for contrast; healthy green zone too
+      return "#ffffff";
+    }
 
     var tires = (sensors && sensors.tires) || {fl:null,fr:null,rl:null,rr:null};
     function tireColor(psi) {
-      if (psi == null) return C.faint;         // no data
-      if (psi < 30) return C.red;              // low
-      if (psi < 34) return C.amber;            // marginal
-      return C.green;                          // good
+      if (psi == null) return C.faint;
+      if (psi < 30) return C.red;
+      if (psi < 34) return C.amber;
+      return C.green;
     }
     function tirePsiTxt(psi) { return psi == null ? "\u2013" : Math.round(psi)+""; }
-
-    // A tire = rect + psi label beside it
     function tire(x, y, psi, labelX, anchor) {
       var col = tireColor(psi);
       return '<rect x="'+x+'" y="'+y+'" width="16" height="42" rx="6" fill="'+col+'"/>' +
         '<text x="'+labelX+'" y="'+(y+26)+'" font-size="11" font-weight="700" text-anchor="'+anchor+'" fill="'+C.ink+'">'+tirePsiTxt(psi)+'</text>';
     }
-    function marker(cx, cy, v) {
-      if (v<1) return "";
-      var c = v>=2?C.red:C.amber;
-      return '<circle cx="'+cx+'" cy="'+cy+'" r="10" fill="'+c+'"/>' +
-             '<text x="'+cx+'" y="'+(cy+4)+'" font-size="11" font-weight="700" text-anchor="middle" fill="#fff">!</text>';
+    // A system zone: filled rounded rect in its status color + centered white label
+    function zone(x, y, w, hgt, label, v, fontSize) {
+      var fill = sysFill(v);
+      var op = sysStatus(v)==="green" ? "0.55" : "0.95"; // healthy slightly softer so reds/ambers pop
+      return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+hgt+'" rx="7" fill="'+fill+'" opacity="'+op+'"/>' +
+        '<text x="'+(x+w/2)+'" y="'+(y+hgt/2+3)+'" font-size="'+fontSize+'" font-weight="700" text-anchor="middle" fill="#ffffff" style="letter-spacing:.03em;">'+label+'</text>';
     }
 
     var anyTireData = ["fl","fr","rl","rr"].some(function (k){ return tires[k]!=null; });
 
+    // legend row under the diagram
+    function legendDot(color, text) {
+      return '<span style="display:inline-flex; align-items:center; gap:4px; margin:0 6px;"><span style="width:9px;height:9px;border-radius:50%;background:'+color+';display:inline-block;"></span><span style="font-size:10.5px;color:'+C.soft+';">'+text+'</span></span>';
+    }
+
     return '<svg viewBox="0 0 210 340" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vehicle status diagram">' +
       '<text x="105" y="16" font-size="11" text-anchor="middle" fill="'+C.soft+'">FRONT</text>' +
-      // body
+      // body (overall health tint)
       '<rect x="52" y="26" width="106" height="266" rx="24" fill="'+bodyFill+'" stroke="'+bodyStroke+'" stroke-width="3"/>' +
       // cab window
-      '<rect x="66" y="92" width="78" height="56" rx="10" fill="'+C.card+'" stroke="'+C.line+'" stroke-width="2"/>' +
-      // bed line
-      '<line x1="66" y1="196" x2="144" y2="196" stroke="'+C.line+'" stroke-width="2"/>' +
-      // four tires with PSI (labels pushed outside the body so nothing overlaps)
+      '<rect x="66" y="120" width="78" height="44" rx="10" fill="'+C.card+'" stroke="'+C.line+'" stroke-width="2"/>' +
+      // four tires with PSI
       tire(36, 70, tires.fl, 26, "end") +
       tire(158, 70, tires.fr, 184, "start") +
       tire(36, 228, tires.rl, 26, "end") +
       tire(158, 228, tires.rr, 184, "start") +
-      // engine zone (top center) — label ABOVE marker area, no overlap
-      '<rect x="72" y="34" width="66" height="24" rx="7" fill="'+zoneColor(sys.engine)+'" stroke="'+zoneStroke(sys.engine)+'" stroke-width="1.5"/>' +
-      '<text x="105" y="49" font-size="9" font-weight="600" text-anchor="middle" fill="'+C.soft+'">ENGINE</text>' +
+      // engine zone (front) — its own status color
+      zone(70, 36, 70, 30, "ENGINE", sys.engine, 10) +
       // transmission zone (center)
-      '<rect x="80" y="162" width="50" height="22" rx="6" fill="'+zoneColor(sys.transmission)+'" stroke="'+zoneStroke(sys.transmission)+'" stroke-width="1.5"/>' +
-      '<text x="105" y="177" font-size="8" font-weight="600" text-anchor="middle" fill="'+C.soft+'">TRANS</text>' +
+      zone(74, 176, 62, 26, "TRANS", sys.transmission, 9) +
       // brakes zone (rear)
-      '<rect x="76" y="258" width="58" height="22" rx="6" fill="'+zoneColor(sys.brakes)+'" stroke="'+zoneStroke(sys.brakes)+'" stroke-width="1.5"/>' +
-      '<text x="105" y="273" font-size="8" font-weight="600" text-anchor="middle" fill="'+C.soft+'">BRAKES</text>' +
-      // fault markers sit to the RIGHT of each zone so they never cover the label
-      marker(150,46,sys.engine) + marker(140,173,sys.transmission) + marker(142,269,sys.brakes) +
+      zone(72, 252, 66, 30, "BRAKES", sys.brakes, 10) +
       '</svg>' +
-      '<div style="text-align:center; font-size:11px; color:'+C.soft+'; margin-top:6px;">' +
+      '<div style="text-align:center; margin-top:8px;">' +
+        legendDot(C.green,"OK") + legendDot(C.amber,"Warning") + legendDot(C.red,"Critical") +
+      '</div>' +
+      '<div style="text-align:center; font-size:11px; color:'+C.soft+'; margin-top:4px;">' +
         (anyTireData ? "Tire PSI shown per corner" : "No tire pressure data for this asset") +
       '</div>';
   }
