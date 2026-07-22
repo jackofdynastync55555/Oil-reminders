@@ -259,6 +259,34 @@ geotab.addin.jackMaintenance = function () {
     });
   }
 
+  // Fuel level: query ONLY the fuel diagnostic (DiagnosticFuelLevelId) per device.
+  // Because it's a single diagnostic, results can't be truncated by other diagnostics,
+  // so the newest reading is reliably the true current value (like Geotab's Measurements page).
+  function getFuelLevels(devices) {
+    var from = daysAgo(14), to = new Date().toISOString();
+    var calls = devices.map(function (d) {
+      return ["Get", { typeName:"StatusData", resultsLimit: 2000, search:{
+        deviceSearch:{id:d.id}, diagnosticSearch:{id:"DiagnosticFuelLevelId"}, fromDate:from, toDate:to
+      }}];
+    });
+    if (!calls.length) return Promise.resolve({});
+    return multiCall(calls).then(function (rs) {
+      var m = {};
+      rs.forEach(function (arr, i) {
+        var newest = null, newestT = -1;
+        (arr||[]).forEach(function (sd) {
+          var t = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
+          if (t > newestT && sd.data != null) { newestT = t; newest = sd.data; }
+        });
+        m[devices[i].id] = newest; // percentage
+      });
+      return m;
+    }).catch(function (e) {
+      console.warn("fuel multiCall failed:", e && e.message);
+      return {};
+    });
+  }
+
   // Sensors: recent StatusData per device, matched to tire pressure (per corner),
   // fuel level, and engine RPM by DIAGNOSTIC NAME (works whether ids are KnownIds
   // or GUIDs). Returns { deviceId: { tires:{fl,fr,rl,rr}, fuel, rpm, diagValues:{id:val} } }
@@ -355,10 +383,6 @@ geotab.addin.jackMaintenance = function () {
               if (psi != null && psi > 0 && psi < 200 && corner !== "generic") info.tires[corner] = psi;
             } else if (/engine oil life remaining|oil life/.test(nm)) {
               info.oilLife = val; // percentage remaining, from the vehicle's own monitor
-            } else if (/fuel level/.test(nm)) {
-              info.fuel = val; // percentage
-            } else if (/engine speed|\brpm\b/.test(nm)) {
-              info.rpm = val;
             } else if (/electrical system rating|\besr\b/.test(nm)) {
               info.esr = val; // 0-100 %
             } else if (/battery voltage|\bbattery\b/.test(nm) && /volt/.test(nm)) {
@@ -397,15 +421,22 @@ geotab.addin.jackMaintenance = function () {
         var by = {};
         active.forEach(function (f) {
           var did = f.device && f.device.id; if (!did) return;
-          if (!by[did]) by[did] = { total:0, red:0, amber:0, items:[] };
+          if (!by[did]) by[did] = { total:0, red:0, amber:0, deviceCount:0, vehicleCount:0, items:[] };
           var sev = (f.severity || "").toLowerCase();
           var isRed = sev.indexOf("crit")>=0 || sev.indexOf("severe")>=0 || sev.indexOf("high")>=0;
-          by[did].total++; if (isRed) by[did].red++; else by[did].amber++;
+          var code = (f.diagnostic && (f.diagnostic.code || f.diagnostic.id)) || "fault";
+          var diagId = f.diagnostic && f.diagnostic.id ? f.diagnostic.id : null;
+          var faultStr = ((diagId||"") + " " + code).toLowerCase();
+          var isDevice = /telematics|devicetype|invaliddevice|iox|harness|godevice|watchdog|firmware|tamper/.test(faultStr);
+          by[did].total++;
+          if (isDevice) by[did].deviceCount++; else by[did].vehicleCount++;
+          if (isRed) by[did].red++; else by[did].amber++;
           by[did].items.push({
-            diagId: f.diagnostic && f.diagnostic.id ? f.diagnostic.id : null,
-            code: (f.diagnostic && (f.diagnostic.code || f.diagnostic.id)) || "fault",
+            diagId: diagId,
+            code: code,
             controller: f.controller && f.controller.id ? f.controller.id : "",
             severity: isRed ? "critical" : "warning",
+            isDevice: isDevice,
             first: f.dateTime || f.activeFrom || null,
             state: f.faultState || "Active"
           });
@@ -447,6 +478,7 @@ geotab.addin.jackMaintenance = function () {
     var sys = { engine:0, transmission:0, brakes:0, tires:0, electrical:0, emissions:0, other:0 };
     if (!faultInfo) return sys;
     faultInfo.items.forEach(function (it) {
+      if (it.isDevice) return; // device/telematics faults aren't a vehicle system
       var name = ((diagNameCache[it.diagId] || it.code || "") + " " + (it.controller||"")).toLowerCase();
       var w = it.severity === "critical" ? 2 : 1;
       if (/tire|tyre|tpms|pressure|wheel/.test(name)) sys.tires += w;
@@ -485,8 +517,17 @@ geotab.addin.jackMaintenance = function () {
     var reasons = [], level = "green";
     function bump(t){ if(t==="red") level="red"; else if(t==="amber"&&level!=="red") level="amber"; }
     if (faults && faults.total>0) {
-      if (faults.red>0){ bump("red"); reasons.push(faults.red+" critical fault"+(faults.red>1?"s":"")); }
-      if (faults.amber>0){ bump("amber"); reasons.push(faults.amber+" fault"+(faults.amber>1?"s":"")); }
+      // Vehicle (mechanical) faults drive the real status
+      var vRed = 0, vAmber = 0;
+      (faults.items||[]).forEach(function (it){
+        if (it.isDevice) return;
+        if (it.severity==="critical") vRed++; else vAmber++;
+      });
+      if (vRed>0){ bump("red"); reasons.push(vRed+" critical fault"+(vRed>1?"s":"")); }
+      if (vAmber>0){ bump("amber"); reasons.push(vAmber+" fault"+(vAmber>1?"s":"")); }
+      // Device/telematics faults are minor — never escalate past amber, labeled clearly
+      var devCount = faults.deviceCount || 0;
+      if (devCount>0){ bump("amber"); reasons.push(devCount+" device fault"+(devCount>1?"s":"")); }
     }
     var oilInfo = null;
     if (oil && odoMeters!=null) {
@@ -680,9 +721,6 @@ geotab.addin.jackMaintenance = function () {
       var cc = sensors.coolant >= 240 ? C.red : (sensors.coolant >= 225 ? C.amber : C.ink);
       rows += readRow("Coolant temp", '<span style="color:'+cc+'; font-weight:600;">'+Math.round(sensors.coolant)+'\u00b0F</span>');
     }
-    if (sensors && sensors.engineHours != null) {
-      rows += readRow("Engine hours", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.engineHours)+' h</span>');
-    }
     if (sensors && sensors.oilLife != null) {
       var olc = sensors.oilLife < 15 ? C.red : (sensors.oilLife < 30 ? C.amber : C.green);
       rows += readRow("Oil life remaining", '<span style="color:'+olc+'; font-weight:600;">'+Math.round(sensors.oilLife)+'%</span>');
@@ -696,7 +734,13 @@ geotab.addin.jackMaintenance = function () {
       ? '<div style="margin-top:10px;"><div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:2px;">Readings</div>'+rows+'</div>'
       : '';
 
-    // ---- faults: STACK duplicates by name, show count + latest date ----
+    // ---- faults: categorize into VEHICLE faults vs DEVICE/telematics faults ----
+    // Device faults (GO unit, IOX, harness, "invalid device type") are minor/self-service
+    // and shouldn't sit at the same weight as real powertrain/brake faults.
+    function isDeviceFault(name, code) {
+      var s = ((name||"") + " " + (code||"")).toLowerCase();
+      return /telematics|device type|invalid device|iox|harness|go device|gps|antenna|watchdog|firmware|tamper|unplug|reader|add-on/.test(s);
+    }
     var faultList = "";
     if (h.faults && h.faults.items.length) {
       var groups = {};
@@ -708,32 +752,46 @@ geotab.addin.jackMaintenance = function () {
         var t = it.first ? new Date(it.first).getTime() : 0;
         if (t && (!groups[key].latest || t > groups[key].latest)) groups[key].latest = t;
       });
-      // critical first, then by count
       var arr = Object.keys(groups).map(function (k){ return groups[k]; });
-      arr.sort(function (a,b){
+      // split into vehicle vs device
+      var vehicleFaults = arr.filter(function (g){ return !isDeviceFault(g.name, g.code); });
+      var deviceFaults  = arr.filter(function (g){ return isDeviceFault(g.name, g.code); });
+      function sortFaults(list){ list.sort(function (a,b){
         if ((a.severity==="critical")!==(b.severity==="critical")) return a.severity==="critical"?-1:1;
         return b.count - a.count;
-      });
-      faultList = arr.map(function (g) {
-        var c = g.severity==="critical"?C.red:C.amber;
-        var bg = g.severity==="critical"?C.redBg:C.amberBg;
+      }); return list; }
+      sortFaults(vehicleFaults); sortFaults(deviceFaults);
+
+      function renderFault(g, muted) {
+        var c = muted ? C.faint : (g.severity==="critical"?C.red:C.amber);
+        var bg = muted ? C.track : (g.severity==="critical"?C.redBg:C.amberBg);
         var when = g.latest ? new Date(g.latest).toLocaleDateString() : "";
         var countBadge = g.count>1 ? ' <span style="font-size:11px; color:'+C.faint+';">\u00d7'+g.count+'</span>' : '';
         var action = recommendedAction(g.name, g.severity);
-        return '<div style="padding:10px 0; border-top:1px solid '+C.line+';">' +
+        return '<div style="padding:10px 0; border-top:1px solid '+C.line+';'+(muted?' opacity:0.78;':'')+'">' +
           '<div style="display:flex; align-items:center; gap:10px;">' +
             dot(c) +
-            '<div style="flex:1;"><div style="font-size:13px; color:'+C.ink+'; font-weight:600;">'+esc(g.name)+countBadge+'</div>' +
+            '<div style="flex:1;"><div style="font-size:13px; color:'+(muted?C.soft:C.ink)+'; font-weight:600;">'+esc(g.name)+countBadge+'</div>' +
             '<div style="font-size:11.5px; color:'+C.soft+';">'+esc(g.code)+(when?" · latest "+when:"")+(g.count>1?" · "+g.count+" occurrences":"")+'</div></div>' +
-            pill(g.severity, bg, c) +
+            pill(muted?"device":g.severity, bg, c) +
           '</div>' +
           '<div style="margin-left:21px; margin-top:5px; font-size:12px; color:'+C.soft+'; border-left:2px solid '+c+'; padding-left:9px;">' +
             '<span style="color:'+c+'; font-weight:600;">Recommended: </span>'+esc(action) +
           '</div>' +
         '</div>';
-      }).join("");
+      }
+
+      if (vehicleFaults.length) {
+        faultList += vehicleFaults.map(function (g){ return renderFault(g, false); }).join("");
+      } else {
+        faultList += '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No vehicle fault codes.</div>';
+      }
+      if (deviceFaults.length) {
+        faultList += '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.faint+'; margin:16px 0 2px; padding-top:12px; border-top:1px dashed '+C.line+';">Device / telematics \u00b7 minor</div>';
+        faultList += deviceFaults.map(function (g){ return renderFault(g, true); }).join("");
+      }
     } else {
-      faultList = '<div style="font-size:13px; color:'+C.soft+'; padding:10px 0;">No active fault codes.</div>';
+      faultList = '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No active fault codes.</div>';
     }
 
     return '<div style="padding:4px 16px 16px; background:'+C.card2+'; border-top:1px solid '+C.line+';">' +
@@ -1377,9 +1435,15 @@ geotab.addin.jackMaintenance = function () {
       cache.allDevices = r[0];
       populateGroupSelect();
       var devices = cache.allDevices; // load data for ALL devices; filter at render time
-      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]), safe(getGlobalSettings(),{settingsKey:"global",defaultEmailTo:null}) ]);
+      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]), safe(getGlobalSettings(),{settingsKey:"global",defaultEmailTo:null}), safe(getFuelLevels(devices),{}) ]);
     }).then(function (res) {
       cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4]; globalSettings = res[5] || globalSettings;
+      var fuelMap = res[6] || {};
+      // merge dedicated fuel readings into the sensor map so the detail panel uses them
+      Object.keys(fuelMap).forEach(function (id){
+        if (!cache.sensorMap[id]) cache.sensorMap[id] = {};
+        cache.sensorMap[id].fuel = fuelMap[id];
+      });
       return safe(resolveDiagnostics(cache.faultMap), undefined);
     }).then(function () {
       renderAll();
