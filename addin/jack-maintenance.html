@@ -69,6 +69,8 @@ geotab.addin.jackMaintenance = function () {
   var healthFilter = null;  // null | 'red' | 'amber' | 'green' — summary card filter
   var oilFilter = null;     // null | 'all' | 'ok' | 'soon' | 'due' — oil summary filter
   var expandedHistory = {}; // deviceId -> true if its service history is expanded
+  var expandedBatch = {};   // batchId -> true if a group reminder batch is expanded
+  var globalSettings = { settingsKey:"global", defaultEmailTo:null };
 
   // ---- utils ---------------------------------------------------------
   function toast(msg) {
@@ -218,6 +220,28 @@ geotab.addin.jackMaintenance = function () {
         return { id: r.id, details: det };
       }).filter(function (x){ return x.details && x.details.deviceId; });
     }).catch(function(){ return []; });
+  }
+  // Global settings record (default email recipients) lives in the custom store,
+  // marked with settingsKey so it's distinct from reminder records.
+  var globalSettingsRec = null;
+  function getGlobalSettings() {
+    return apiCall("Get", { typeName: "AddInData", search: { addInId: CUSTOM_ADD_IN_ID } }).then(function (recs) {
+      var found = null;
+      recs.forEach(function (r) {
+        var det = typeof r.details === "string" ? JSON.parse(r.details) : r.details;
+        if (det && det.settingsKey === "global") found = { id:r.id, details:det };
+      });
+      globalSettingsRec = found;
+      return found ? found.details : { settingsKey:"global", defaultEmailTo:null };
+    }).catch(function(){ return { settingsKey:"global", defaultEmailTo:null }; });
+  }
+  function saveGlobalSettings(details) {
+    var entity = { addInId:CUSTOM_ADD_IN_ID, groups:[{id:"GroupCompanyId"}], details:details };
+    var method = globalSettingsRec && globalSettingsRec.id ? "Set" : "Add";
+    if (globalSettingsRec && globalSettingsRec.id) entity.id = globalSettingsRec.id;
+    return apiCall(method, { typeName:"AddInData", entity:entity }).then(function (newId){
+      if (!globalSettingsRec) globalSettingsRec = { id:newId, details:details }; else globalSettingsRec.details = details;
+    });
   }
   function getOdometers(devices) {
     var now = new Date().toISOString();
@@ -1046,67 +1070,142 @@ geotab.addin.jackMaintenance = function () {
       '</div>';
 
     // ---- existing reminders ----
+    // Build a single reminder card's inner HTML (used standalone and inside batches)
+    function reminderCard(rec, insideBatch) {
+      var d = rec.details;
+      var unit = d.type === "days" ? "days" : UNITS;
+      var progress, remaining, pct;
+      if (d.type === "days") {
+        var start = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
+        var elapsed = (Date.now() - start) / 86400000;
+        progress = elapsed; remaining = d.interval - elapsed;
+        pct = Math.max(0, Math.min(100, (elapsed / d.interval) * 100));
+      } else {
+        var odo = odoByDevice[d.deviceId];
+        var since = odo!=null && d.baselineMeters!=null ? (odo - d.baselineMeters)/METERS_PER_UNIT : 0;
+        progress = since; remaining = d.interval - since;
+        pct = Math.max(0, Math.min(100, (since / d.interval) * 100));
+      }
+      var pillHtml, fill;
+      if (d.enabled===false){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
+      else if (remaining<=0){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
+      else if (pct>=85){ pillHtml=pill("Due soon",C.amberBg,C.amber); fill=C.amber; }
+      else { pillHtml=pill(fmt(Math.max(0,remaining))+" "+unit+" left",C.greenBg,C.green); fill=C.brand; }
+
+      var histHtml = "";
+      var hist = (d.history||[]).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
+      if (hist.length) {
+        histHtml = '<div style="margin-top:12px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+          '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:5px;">History</div>' +
+          hist.map(function (e){
+            var val = d.type==="days" ? (e.date?new Date(e.date).toLocaleDateString():"") : (e.odoMeters!=null?fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS:"—");
+            var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
+            var isAuto = e.source==="auto";
+            var badge = isAuto
+              ? '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.amberBg+'; color:'+C.amber+'; margin-left:6px;">auto</span>'
+              : '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">done</span>';
+            return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:'+C.soft+'; padding:3px 0;"><span>'+dt+' \u00b7 '+esc(d.label||"Reminder")+badge+'</span><span style="color:'+C.ink+';">'+val+'</span></div>';
+          }).join("") + '</div>';
+      }
+      var margin = insideBatch ? "margin:10px 0 0;" : "margin-bottom:12px;";
+      var titleLine = insideBatch
+        ? '<div><span style="font-size:14px; font-weight:600; color:'+C.ink+';">'+esc(d.deviceName||nameById[d.deviceId]||"")+'</span>' +
+          '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">every '+fmt(d.interval)+' '+unit+'</div></div>'
+        : '<div><span style="font-size:15px; font-weight:650; color:'+C.ink+';">'+esc(d.label||"Reminder")+'</span>' +
+          '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+esc(d.deviceName||nameById[d.deviceId]||"")+' \u00b7 every '+fmt(d.interval)+' '+unit+'</div></div>';
+
+      return '<div data-crid="'+esc(rec.id)+'" style="background:'+(insideBatch?C.card2:C.card)+'; border:1px solid '+C.line+'; border-radius:12px; padding:14px 16px; '+margin+' '+(insideBatch?'':'box-shadow:'+C.shadow+';')+'">' +
+        '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px;">' +
+          titleLine + pillHtml +
+        '</div>' +
+        '<div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;"><div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
+        '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+          '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" data-cr="enabled" '+(d.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> On</label>' +
+          '<button data-cr="edit-email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
+          '<span style="flex:1;"></span>' +
+          '<button data-cr="complete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Mark done</button>' +
+          '<button data-cr="delete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Delete</button>' +
+        '</div>' +
+        histHtml +
+      '</div>';
+    }
+
     var listHtml = "";
     if (!customList.length) {
       listHtml = '<div style="text-align:center; color:'+C.soft+'; padding:30px 20px;">No custom reminders yet. Add one above.</div>';
     } else {
+      // separate batch reminders from standalone ones
+      var batches = {}, standalone = [];
       customList.forEach(function (rec) {
-        var d = rec.details;
-        var unit = d.type === "days" ? "days" : UNITS;
-        var progress, remaining, pct;
-        if (d.type === "days") {
-          var start = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
-          var elapsed = (Date.now() - start) / 86400000;
-          progress = elapsed; remaining = d.interval - elapsed;
-          pct = Math.max(0, Math.min(100, (elapsed / d.interval) * 100));
-        } else {
-          var odo = odoByDevice[d.deviceId];
-          var since = odo!=null && d.baselineMeters!=null ? (odo - d.baselineMeters)/METERS_PER_UNIT : 0;
-          progress = since; remaining = d.interval - since;
-          pct = Math.max(0, Math.min(100, (since / d.interval) * 100));
-        }
-        var pillHtml, fill;
-        if (d.enabled===false){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
-        else if (remaining<=0){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
-        else if (pct>=85){ pillHtml=pill("Due soon",C.amberBg,C.amber); fill=C.amber; }
-        else { pillHtml=pill(fmt(Math.max(0,remaining))+" "+unit+" left",C.greenBg,C.green); fill=C.brand; }
-
-        var histHtml = "";
-        var hist = (d.history||[]).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
-        if (hist.length) {
-          histHtml = '<div style="margin-top:12px; padding-top:12px; border-top:1px solid '+C.line+';">' +
-            '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:5px;">History</div>' +
-            hist.map(function (e){
-              var val = d.type==="days" ? (e.date?new Date(e.date).toLocaleDateString():"") : (e.odoMeters!=null?fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS:"—");
-              var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
-              var isAuto = e.source==="auto";
-              var badge = isAuto
-                ? '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.amberBg+'; color:'+C.amber+'; margin-left:6px;">auto</span>'
-                : '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">done</span>';
-              return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:'+C.soft+'; padding:3px 0;"><span>'+dt+' \u00b7 '+esc(d.label||"Reminder")+badge+'</span><span style="color:'+C.ink+';">'+val+'</span></div>';
-            }).join("") + '</div>';
-        }
-
-        var card = '<div data-crid="'+esc(rec.id)+'" style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; margin-bottom:12px; box-shadow:'+C.shadow+';">' +
-          '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px;">' +
-            '<div><span style="font-size:15px; font-weight:650; color:'+C.ink+';">'+esc(d.label||"Reminder")+'</span>' +
-            '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+esc(d.deviceName||nameById[d.deviceId]||"")+' \u00b7 every '+fmt(d.interval)+' '+unit+'</div></div>' +
-            pillHtml +
-          '</div>' +
-          '<div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;"><div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
-          '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px; padding-top:12px; border-top:1px solid '+C.line+';">' +
-            '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" data-cr="enabled" '+(d.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> On</label>' +
-            '<span style="flex:1;"></span>' +
-            '<button data-cr="complete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Mark done</button>' +
-            '<button data-cr="delete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Delete</button>' +
-          '</div>' +
-          histHtml +
-        '</div>';
-        listHtml += card;
+        var b = rec.details.batchId;
+        if (b) { if (!batches[b]) batches[b]=[]; batches[b].push(rec); }
+        else standalone.push(rec);
       });
+
+      // render each batch as a collapsible line
+      Object.keys(batches).forEach(function (bId) {
+        var recs = batches[bId];
+        var d0 = recs[0].details;
+        var unit = d0.type === "days" ? "days" : UNITS;
+        var isOpen = !!expandedBatch[bId];
+        // batch summary status: worst of the group
+        var anyDue=false, anySoon=false, onCount=0;
+        recs.forEach(function (r){
+          var dd=r.details; if (dd.enabled!==false) onCount++;
+          var rem;
+          if (dd.type==="days"){ var st=dd.baselineDate?new Date(dd.baselineDate).getTime():Date.now(); rem=dd.interval-((Date.now()-st)/86400000); }
+          else { var o=odoByDevice[dd.deviceId]; var s=o!=null&&dd.baselineMeters!=null?(o-dd.baselineMeters)/METERS_PER_UNIT:0; rem=dd.interval-s; }
+          if (dd.enabled!==false){ if (rem<=0) anyDue=true; else if (rem<=dd.interval*0.15) anySoon=true; }
+        });
+        var bPill = anyDue?pill(recs.length+" vehicles \u00b7 some due",C.redBg,C.red)
+                  : anySoon?pill(recs.length+" vehicles \u00b7 due soon",C.amberBg,C.amber)
+                  : pill(recs.length+" vehicles \u00b7 on track",C.greenBg,C.green);
+
+        var inner = "";
+        if (isOpen) {
+          inner = '<div style="margin-top:12px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+            '<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">' +
+              '<span style="font-size:12px; color:'+C.soft+';">Set interval for all:</span>' +
+              '<input data-batchinterval="'+esc(bId)+'" type="number" min="1" value="'+d0.interval+'" style="width:100px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card+'; color:'+C.ink+';"> '+unit +
+              '<button data-batchsave="'+esc(bId)+'" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Apply to all '+recs.length+'</button>' +
+              '<button data-batchdelete="'+esc(bId)+'" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Delete all</button>' +
+            '</div>' +
+            recs.map(function (r){ return reminderCard(r, true); }).join("") +
+          '</div>';
+        }
+
+        listHtml += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; margin-bottom:12px; box-shadow:'+C.shadow+';">' +
+          '<div data-batchtoggle="'+esc(bId)+'" style="display:flex; align-items:center; gap:12px; cursor:pointer; user-select:none;">' +
+            '<span style="font-size:14px; color:'+C.faint+'; width:12px;">'+(isOpen?"\u25be":"\u25b8")+'</span>' +
+            '<div style="flex:1;"><span style="font-size:15px; font-weight:650; color:'+C.ink+';">'+esc(d0.label||"Reminder")+'</span>' +
+            '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+esc(d0.batchGroupName||"Group")+' \u00b7 '+recs.length+' vehicles \u00b7 every '+fmt(d0.interval)+' '+unit+'</div></div>' +
+            bPill +
+          '</div>' + inner +
+        '</div>';
+      });
+
+      // standalone reminders as normal cards
+      standalone.forEach(function (rec){ listHtml += reminderCard(rec, false); });
     }
 
-    customEl.innerHTML = form + '<div id="cr-list">' + listHtml + '</div>';
+    var settingsBar =
+      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:18px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
+        '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Default email recipients</span>' +
+        '<span id="cr-default-email" style="flex:1; min-width:180px; font-size:13px; color:'+C.ink+';">'+esc((globalSettings&&globalSettings.defaultEmailTo)||"(none set — using fleet address)")+'</span>' +
+        '<button id="cr-edit-default" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
+      '</div>';
+
+    customEl.innerHTML = form + settingsBar + '<div id="cr-list">' + listHtml + '</div>';
+
+    // wire default-recipients editor
+    var editDefault = $("cr-edit-default");
+    if (editDefault) editDefault.addEventListener("click", function () {
+      var current = (globalSettings && globalSettings.defaultEmailTo) || "";
+      var input = window.prompt("Default email recipients for ALL reminders (comma-separated). Individual reminders can override this:", current);
+      if (input === null) return;
+      var det = { settingsKey:"global", defaultEmailTo: input.trim() || null };
+      saveGlobalSettings(det).then(function () { globalSettings = det; toast("Default recipients saved"); renderCustom(devices, odoMap, customList); });
+    });
 
     // wire mode toggle (asset vs group)
     var modeSel = $("cr-mode");
@@ -1128,13 +1227,14 @@ geotab.addin.jackMaintenance = function () {
       var email = ($("cr-email").value || "").trim();
       if (interval <= 0) { toast("Enter a valid interval"); return; }
 
-      function makeDet(deviceId) {
+      function makeDet(deviceId, batchId, batchGroupName) {
         return {
           deviceId: deviceId, deviceName: nameById[deviceId] || "",
           label: label, type: type, interval: interval,
           baselineMeters: type==="mi" ? (odoByDevice[deviceId]||0) : null,
           baselineDate: new Date().toISOString(),
-          enabled: true, emailTo: email || null, emailPending: false, history: []
+          enabled: true, emailTo: email || null, emailPending: false, history: [],
+          batchId: batchId || null, batchGroupName: batchGroupName || null
         };
       }
 
@@ -1144,12 +1244,14 @@ geotab.addin.jackMaintenance = function () {
         var allowed = groupWithDescendants(groupId);
         var targets = devices.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); });
         if (!targets.length) { toast("No vehicles in that group"); return; }
-        Promise.all(targets.map(function (dev){ return persistCustom({ id:null, details:makeDet(dev.id) }); }))
+        var batchId = "batch_" + Date.now() + "_" + Math.floor(Math.random()*100000);
+        var gName = (groupNameMap()[groupId] || "Group");
+        Promise.all(targets.map(function (dev){ return persistCustom({ id:null, details:makeDet(dev.id, batchId, gName) }); }))
           .then(function () { toast('"'+label+'" added to '+targets.length+' vehicle'+(targets.length===1?'':'s')); reloadAll(); });
       } else {
         var deviceId = $("cr-device").value;
         if (!deviceId) { toast("Pick an asset"); return; }
-        persistCustom({ id:null, details:makeDet(deviceId) }).then(function () { toast('"'+label+'" added'); reloadAll(); });
+        persistCustom({ id:null, details:makeDet(deviceId, null, null) }).then(function () { toast('"'+label+'" added'); reloadAll(); });
       }
     });
 
@@ -1176,6 +1278,42 @@ geotab.addin.jackMaintenance = function () {
       });
       if (deleteBtn) deleteBtn.addEventListener("click", function () {
         deleteCustom(rec).then(function () { toast("Reminder deleted"); reloadAll(); });
+      });
+      var emailBtn = cardEl.querySelector('[data-cr="edit-email"]');
+      if (emailBtn) emailBtn.addEventListener("click", function () {
+        var current = rec.details.emailTo || "";
+        var input = window.prompt("Email recipients for \""+(rec.details.label||"reminder")+"\" (comma-separated). Leave blank to use the fleet default:", current);
+        if (input === null) return; // cancelled
+        rec.details.emailTo = input.trim() || null;
+        persistCustom(rec).then(function () { toast("Recipients updated"); });
+      });
+    });
+
+    // wire batch toggles + batch edit/delete
+    customEl.querySelectorAll('[data-batchtoggle]').forEach(function (el) {
+      el.addEventListener("click", function () {
+        var b = el.getAttribute("data-batchtoggle");
+        expandedBatch[b] = !expandedBatch[b];
+        renderCustom(devices, odoMap, customList);
+      });
+    });
+    customEl.querySelectorAll('[data-batchsave]').forEach(function (el) {
+      el.addEventListener("click", function () {
+        var b = el.getAttribute("data-batchsave");
+        var input = customEl.querySelector('[data-batchinterval="'+cssIdSel(b)+'"]');
+        var newInterval = Number(input && input.value) || 0;
+        if (newInterval <= 0) { toast("Enter a valid interval"); return; }
+        var recs = customList.filter(function (r){ return r.details.batchId === b; });
+        Promise.all(recs.map(function (r){ r.details.interval = newInterval; return persistCustom(r); }))
+          .then(function () { toast("Updated interval for "+recs.length+" vehicles"); reloadAll(); });
+      });
+    });
+    customEl.querySelectorAll('[data-batchdelete]').forEach(function (el) {
+      el.addEventListener("click", function () {
+        var b = el.getAttribute("data-batchdelete");
+        var recs = customList.filter(function (r){ return r.details.batchId === b; });
+        Promise.all(recs.map(function (r){ return deleteCustom(r); }))
+          .then(function () { toast("Deleted "+recs.length+" reminders"); reloadAll(); });
       });
     });
   }
@@ -1239,9 +1377,9 @@ geotab.addin.jackMaintenance = function () {
       cache.allDevices = r[0];
       populateGroupSelect();
       var devices = cache.allDevices; // load data for ALL devices; filter at render time
-      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]) ]);
+      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]), safe(getGlobalSettings(),{settingsKey:"global",defaultEmailTo:null}) ]);
     }).then(function (res) {
-      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4];
+      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4]; globalSettings = res[5] || globalSettings;
       return safe(resolveDiagnostics(cache.faultMap), undefined);
     }).then(function () {
       renderAll();
