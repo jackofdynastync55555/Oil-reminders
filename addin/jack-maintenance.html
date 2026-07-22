@@ -68,6 +68,7 @@ geotab.addin.jackMaintenance = function () {
   var expandedAsset = null; // device id whose detail panel is open
   var healthFilter = null;  // null | 'red' | 'amber' | 'green' — summary card filter
   var oilFilter = null;     // null | 'all' | 'ok' | 'soon' | 'due' — oil summary filter
+  var expandedHistory = {}; // deviceId -> true if its service history is expanded
 
   // ---- utils ---------------------------------------------------------
   function toast(msg) {
@@ -124,6 +125,7 @@ geotab.addin.jackMaintenance = function () {
         (g.children || []).forEach(function (c) {
           if (!groupChildren[g.id]) groupChildren[g.id] = [];
           groupChildren[g.id].push(c.id);
+          groupParent[c.id] = g.id;
         });
       });
       return allGroups;
@@ -152,6 +154,11 @@ geotab.addin.jackMaintenance = function () {
     });
   }
 
+  // Geotab built-in classification groups that add clutter, not operational value.
+  // We hide these branches (and their descendants) from the group picker + grouping.
+  var EXCLUDED_GROUP_NAMES = /^(powertrain and fuel type|asset type|asset information|asset purpose)$/i;
+  function isExcludedGroupName(nm) { return EXCLUDED_GROUP_NAMES.test((nm||"").trim()); }
+
   // Build the dropdown options with indentation to show hierarchy
   function populateGroupSelect() {
     if (!groupSelectEl) return;
@@ -162,12 +169,37 @@ geotab.addin.jackMaintenance = function () {
     var opts = ['<option value="">All groups (whole fleet)</option>'];
     function walk(id, depth) {
       var nm = nameById[id] || id;
+      if (isExcludedGroupName(nm)) return; // skip this branch entirely (and its children)
       // skip the synthetic root-ish entries with blank names
       if (nm && nm !== id) opts.push('<option value="'+esc(id)+'"'+(id===selectedGroupId?' selected':'')+'>'+ "\u00a0\u00a0".repeat(depth) + esc(nm)+'</option>');
       (groupChildren[id] || []).forEach(function (c){ walk(c, depth+1); });
     }
     allGroups.forEach(function (g){ if (!isChild[g.id]) walk(g.id, 0); });
     groupSelectEl.innerHTML = opts.join("");
+  }
+
+  // Map of groupId -> name, and parent lookup, for labeling
+  function groupNameMap() {
+    var m = {}; allGroups.forEach(function (g){ m[g.id] = (g.name||"").trim(); }); return m;
+  }
+  var groupParent = {}; // childId -> parentId (built alongside groupChildren)
+  // Return a device's most specific NAMED group + its ancestor path (["East","East-Trucks"])
+  function devicePrimaryGroup(deviceId) {
+    var names = groupNameMap();
+    // only consider named groups that aren't Geotab classification clutter
+    var gs = (deviceGroups[deviceId] || []).filter(function (id){ return names[id] && !isExcludedGroupName(names[id]); });
+    if (!gs.length) return { id:null, name:"Ungrouped", path:["Ungrouped"] };
+    // pick the deepest (most specific) named group = the one with the longest ancestor chain
+    var best = null, bestDepth = -1;
+    gs.forEach(function (id) {
+      var depth = 0, cur = id, guard = 0;
+      while (groupParent[cur] && guard++ < 50) { depth++; cur = groupParent[cur]; }
+      if (depth > bestDepth) { bestDepth = depth; best = id; }
+    });
+    // build path from root to the chosen group, skipping excluded ancestors
+    var path = [], cur = best, guard = 0;
+    while (cur && guard++ < 50) { if (names[cur] && !isExcludedGroupName(names[cur])) path.unshift(names[cur]); cur = groupParent[cur]; }
+    return { id:best, name:names[best]||"Group", path:path.length?path:[names[best]||"Group"] };
   }
   function getOilState() {
     return apiCall("Get", { typeName: "AddInData", search: { addInId: ADD_IN_ID } }).then(function (recs) {
@@ -818,9 +850,39 @@ geotab.addin.jackMaintenance = function () {
     if (counts.total===0) { oilEl.innerHTML += '<div style="text-align:center; color:'+C.soft+'; padding:40px 20px;">No vehicles with odometer data yet.</div>'; return; }
 
     var visible = (oilFilter && oilFilter!=="all") ? items.filter(function (it){ return it.status===oilFilter; }) : items;
+
+    // attach group info + sort by group path so headers group naturally
+    visible.forEach(function (it) { it.group = devicePrimaryGroup(it.device.id); });
+    var hasAnyGroup = visible.some(function (it){ return it.group.id != null; });
+    if (hasAnyGroup) {
+      visible.sort(function (a,b) {
+        var pa = a.group.path.join(" / "), pb = b.group.path.join(" / ");
+        if (pa !== pb) return pa < pb ? -1 : 1;
+        return a.device.name < b.device.name ? -1 : 1;
+      });
+    }
+
     var frag = document.createElement("div");
+    var lastGroupPath = null;
 
     visible.forEach(function (it) {
+      // emit a group header when the group path changes (only if we actually have groups)
+      if (hasAnyGroup) {
+        var pathStr = it.group.path.join(" / ");
+        if (pathStr !== lastGroupPath) {
+          lastGroupPath = pathStr;
+          var header = document.createElement("div");
+          header.style.cssText = "margin:18px 2px 8px; display:flex; align-items:center; gap:8px;";
+          // render path with sub-group indentation feel: bold last segment, muted ancestors
+          var crumb = it.group.path.map(function (seg, i) {
+            var isLast = i === it.group.path.length-1;
+            return '<span style="color:'+(isLast?C.ink:C.soft)+'; font-weight:'+(isLast?'700':'500')+';">'+esc(seg)+'</span>';
+          }).join('<span style="color:'+C.faint+'; margin:0 6px;">\u203a</span>');
+          header.innerHTML = '<span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:'+C.brand+';">Group</span>' +
+            '<span style="font-size:13.5px;">'+crumb+'</span>';
+          frag.appendChild(header);
+        }
+      }
       var device=it.device, det=it.det, rec=it.rec, odoMeters=it.odoMeters, interval=it.interval, since=it.since, pct=it.pct, remaining=it.remaining;
       var pillHtml, fill;
       if (it.status==="off"){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
@@ -836,16 +898,27 @@ geotab.addin.jackMaintenance = function () {
       var histHtml = "";
       var hist = (det.history || []).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
       if (hist.length) {
-        histHtml = '<div style="margin-top:14px; padding-top:14px; border-top:1px solid '+C.line+';">' +
-          '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:6px;">Service history</div>' +
-          hist.map(function (e) {
-            var mi = e.odoMeters!=null ? fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS : "—";
-            var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
-            var src = e.source==="auto" ? "auto-reset" : "marked serviced";
-            var ol = (e.oilLife!=null) ? ' \u00b7 oil life was '+Math.round(e.oilLife)+'%' : '';
-            return '<div style="display:flex; justify-content:space-between; font-size:12.5px; color:'+C.soft+'; padding:4px 0;">' +
-              '<span>'+dt+' \u00b7 '+src+ol+'</span><span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span></div>';
-          }).join("") +
+        var histId = "hist-"+cssId(device.id);
+        var isOpen = !!expandedHistory[device.id];
+        var rowsHtml = hist.map(function (e) {
+          var mi = e.odoMeters!=null ? fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS : "—";
+          var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
+          var isAuto = e.source==="auto";
+          var srcBadge = isAuto
+            ? '<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; background:'+C.amberBg+'; color:'+C.amber+'; margin-left:6px;">auto-triggered</span>'
+            : '<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">manual</span>';
+          var ol = (e.oilLife!=null) ? ' \u00b7 oil life was '+Math.round(e.oilLife)+'%' : '';
+          var label = isAuto ? "auto-reset (service not confirmed)" : "marked serviced";
+          return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12.5px; color:'+C.soft+'; padding:5px 0; border-top:1px solid '+C.line+';">' +
+            '<span>'+dt+' \u00b7 '+label+ol+srcBadge+'</span><span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span></div>';
+        }).join("");
+        histHtml = '<div style="margin-top:14px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+          '<div data-histtoggle="'+esc(device.id)+'" style="display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;">' +
+            '<span style="font-size:13px; color:'+C.faint+'; width:12px;">'+(isOpen?"\u25be":"\u25b8")+'</span>' +
+            '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Service history</span>' +
+            '<span style="font-size:11.5px; color:'+C.faint+';">('+hist.length+')</span>' +
+          '</div>' +
+          '<div id="'+histId+'" style="display:'+(isOpen?"block":"none")+'; margin-top:6px;">'+rowsHtml+'</div>' +
         '</div>';
       }
 
@@ -897,6 +970,15 @@ geotab.addin.jackMaintenance = function () {
     });
     var cof = document.getElementById("clearOilFilter");
     if (cof) cof.addEventListener("click", function () { oilFilter=null; renderOil(devices, odoMap, oilMap, sensorMap); });
+
+    // wire service-history collapse toggles
+    oilEl.querySelectorAll('[data-histtoggle]').forEach(function (el) {
+      el.addEventListener("click", function () {
+        var id = el.getAttribute("data-histtoggle");
+        expandedHistory[id] = !expandedHistory[id];
+        renderOil(devices, odoMap, oilMap, sensorMap);
+      });
+    });
   }
   function oilSumCard(num, label, fg, filterKey) {
     var active = oilFilter===filterKey;
@@ -936,18 +1018,31 @@ geotab.addin.jackMaintenance = function () {
     var deviceOpts = devices.map(function (d) {
       return '<option value="'+esc(d.id)+'">'+esc(d.name)+'</option>';
     }).join("");
+    // real operational groups only (exclude Geotab classification clutter)
+    var names = groupNameMap();
+    var groupOpts = allGroups.filter(function (g) {
+      return names[g.id] && !isExcludedGroupName(names[g.id]);
+    }).map(function (g) {
+      // count vehicles in this group + descendants
+      var allowed = groupWithDescendants(g.id);
+      var count = devices.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); }).length;
+      return '<option value="'+esc(g.id)+'">'+esc(names[g.id])+' ('+count+' vehicle'+(count===1?'':'s')+')</option>';
+    }).join("");
 
     var form =
       '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; margin-bottom:18px; box-shadow:'+C.shadow+';">' +
         '<div style="font-size:14px; font-weight:650; color:'+C.ink+'; margin-bottom:12px;">Add a custom reminder</div>' +
         '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">' +
-          '<label style="font-size:12px; color:'+C.soft+';">Asset<br><select id="cr-device" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;">'+deviceOpts+'</select></label>' +
-          '<label style="font-size:12px; color:'+C.soft+';">Reminder name<br><input id="cr-label" type="text" placeholder="e.g. DOT inspection" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;"></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Apply to<br><select id="cr-mode" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="asset">A single asset</option><option value="group">A whole group</option></select></label>' +
+          '<label id="cr-asset-wrap" style="font-size:12px; color:'+C.soft+';">Asset<br><select id="cr-device" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;">'+deviceOpts+'</select></label>' +
+          '<label id="cr-group-wrap" style="display:none; font-size:12px; color:'+C.soft+';">Group<br><select id="cr-group" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:200px;">'+(groupOpts||'<option value="">No groups found</option>')+'</select></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Reminder name<br><input id="cr-label" type="text" placeholder="e.g. Brake inspection" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;"></label>' +
           '<label style="font-size:12px; color:'+C.soft+';">Type<br><select id="cr-type" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="mi">Every X miles</option><option value="days">Every X days</option></select></label>' +
           '<label style="font-size:12px; color:'+C.soft+';">Interval<br><input id="cr-interval" type="number" min="1" value="5000" style="margin-top:4px; width:100px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"></label>' +
           '<label style="font-size:12px; color:'+C.soft+';">Email to<br><input id="cr-email" type="text" placeholder="optional" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:150px;"></label>' +
           '<button id="cr-add" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Add reminder</button>' +
         '</div>' +
+        '<div id="cr-mode-note" style="font-size:11.5px; color:'+C.soft+'; margin-top:10px; display:none;">A separate reminder will be created for each vehicle in the group, each tracking its own mileage.</div>' +
       '</div>';
 
     // ---- existing reminders ----
@@ -984,7 +1079,11 @@ geotab.addin.jackMaintenance = function () {
             hist.map(function (e){
               var val = d.type==="days" ? (e.date?new Date(e.date).toLocaleDateString():"") : (e.odoMeters!=null?fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS:"—");
               var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
-              return '<div style="display:flex; justify-content:space-between; font-size:12px; color:'+C.soft+'; padding:3px 0;"><span>'+dt+'</span><span style="color:'+C.ink+';">'+val+'</span></div>';
+              var isAuto = e.source==="auto";
+              var badge = isAuto
+                ? '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.amberBg+'; color:'+C.amber+'; margin-left:6px;">auto</span>'
+                : '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">done</span>';
+              return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:'+C.soft+'; padding:3px 0;"><span>'+dt+' \u00b7 '+esc(d.label||"Reminder")+badge+'</span><span style="color:'+C.ink+';">'+val+'</span></div>';
             }).join("") + '</div>';
         }
 
@@ -1009,23 +1108,49 @@ geotab.addin.jackMaintenance = function () {
 
     customEl.innerHTML = form + '<div id="cr-list">' + listHtml + '</div>';
 
+    // wire mode toggle (asset vs group)
+    var modeSel = $("cr-mode");
+    if (modeSel) modeSel.addEventListener("change", function () {
+      var isGroup = modeSel.value === "group";
+      var aw = $("cr-asset-wrap"), gw = $("cr-group-wrap"), note = $("cr-mode-note");
+      if (aw) aw.style.display = isGroup ? "none" : "";
+      if (gw) gw.style.display = isGroup ? "" : "none";
+      if (note) note.style.display = isGroup ? "" : "none";
+    });
+
     // wire add form
     var addBtn = $("cr-add");
     if (addBtn) addBtn.addEventListener("click", function () {
-      var deviceId = $("cr-device").value;
+      var mode = $("cr-mode").value;
       var label = ($("cr-label").value || "").trim() || "Reminder";
       var type = $("cr-type").value;
       var interval = Number($("cr-interval").value) || 0;
       var email = ($("cr-email").value || "").trim();
-      if (!deviceId || interval <= 0) { toast("Pick an asset and a valid interval"); return; }
-      var det = {
-        deviceId: deviceId, deviceName: nameById[deviceId] || "",
-        label: label, type: type, interval: interval,
-        baselineMeters: type==="mi" ? (odoByDevice[deviceId]||0) : null,
-        baselineDate: new Date().toISOString(),
-        enabled: true, emailTo: email || null, emailPending: false, history: []
-      };
-      persistCustom({ id:null, details:det }).then(function () { toast("Reminder added"); reloadAll(); });
+      if (interval <= 0) { toast("Enter a valid interval"); return; }
+
+      function makeDet(deviceId) {
+        return {
+          deviceId: deviceId, deviceName: nameById[deviceId] || "",
+          label: label, type: type, interval: interval,
+          baselineMeters: type==="mi" ? (odoByDevice[deviceId]||0) : null,
+          baselineDate: new Date().toISOString(),
+          enabled: true, emailTo: email || null, emailPending: false, history: []
+        };
+      }
+
+      if (mode === "group") {
+        var groupId = $("cr-group").value;
+        if (!groupId) { toast("Pick a group"); return; }
+        var allowed = groupWithDescendants(groupId);
+        var targets = devices.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); });
+        if (!targets.length) { toast("No vehicles in that group"); return; }
+        Promise.all(targets.map(function (dev){ return persistCustom({ id:null, details:makeDet(dev.id) }); }))
+          .then(function () { toast('"'+label+'" added to '+targets.length+' vehicle'+(targets.length===1?'':'s')); reloadAll(); });
+      } else {
+        var deviceId = $("cr-device").value;
+        if (!deviceId) { toast("Pick an asset"); return; }
+        persistCustom({ id:null, details:makeDet(deviceId) }).then(function () { toast('"'+label+'" added'); reloadAll(); });
+      }
     });
 
     // wire per-card actions
@@ -1043,7 +1168,7 @@ geotab.addin.jackMaintenance = function () {
         var d = rec.details;
         if (!d.history) d.history = [];
         var odo = odoByDevice[d.deviceId];
-        d.history.push({ date: new Date().toISOString(), odoMeters: d.type==="mi" ? odo : null });
+        d.history.push({ date: new Date().toISOString(), odoMeters: d.type==="mi" ? odo : null, source: "manual" });
         if (d.type==="mi") d.baselineMeters = odo!=null ? odo : d.baselineMeters;
         d.baselineDate = new Date().toISOString();
         d.emailPending = true;
