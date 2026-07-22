@@ -285,7 +285,7 @@ geotab.addin.jackMaintenance = function () {
             var when = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
             if (!latest[id] || when > latest[id].when) latest[id] = { value: sd.data, when: when };
           });
-          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, idleFuel:null, idleFuelTrip:null, totalFuel:null, sitting:!!sittingDevices[did], lastSeen:null, _raw:[] };
+          var info = { tires:{fl:null,fr:null,rl:null,rr:null,generic:null}, fuel:null, rpm:null, esr:null, battery:null, coolant:null, engineHours:null, oilLife:null, sitting:!!sittingDevices[did], lastSeen:null, _raw:[] };
           // newest timestamp across all diagnostics = last time the asset reported
           Object.keys(latest).forEach(function (id) {
             if (latest[id].when && (!info.lastSeen || latest[id].when > info.lastSeen)) info.lastSeen = latest[id].when;
@@ -301,12 +301,6 @@ geotab.addin.jackMaintenance = function () {
               if (psi != null && psi > 0 && psi < 200 && corner !== "generic") info.tires[corner] = psi;
             } else if (/engine oil life remaining|oil life/.test(nm)) {
               info.oilLife = val; // percentage remaining, from the vehicle's own monitor
-            } else if (/total fuel used while idling|total idle fuel/.test(nm)) {
-              info.idleFuel = val; // LIFETIME total idle fuel (liters) — preferred
-            } else if (/idle.*fuel|fuel.*idle/.test(nm)) {
-              if (info.idleFuel == null) info.idleFuelTrip = val; // trip idle fuel (fallback only)
-            } else if (/total fuel used \(since|total fuel used$/.test(nm)) {
-              info.totalFuel = val; // lifetime total fuel (liters), for idle %
             } else if (/fuel level/.test(nm)) {
               info.fuel = val; // percentage
             } else if (/engine speed|\brpm\b/.test(nm)) {
@@ -632,24 +626,8 @@ geotab.addin.jackMaintenance = function () {
       var cc = sensors.coolant >= 240 ? C.red : (sensors.coolant >= 225 ? C.amber : C.ink);
       rows += readRow("Coolant temp", '<span style="color:'+cc+'; font-weight:600;">'+Math.round(sensors.coolant)+'\u00b0F</span>');
     }
-    if (sensors && sensors.rpm != null) {
-      rows += readRow("Engine RPM", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.rpm)+'</span>');
-    }
     if (sensors && sensors.engineHours != null) {
       rows += readRow("Engine hours", '<span style="color:'+C.ink+'; font-weight:600;">'+fmt(sensors.engineHours)+' h</span>');
-    }
-    var idleL = (sensors && sensors.idleFuel != null) ? sensors.idleFuel
-              : (sensors && sensors.idleFuelTrip != null ? sensors.idleFuelTrip : null);
-    if (idleL != null) {
-      var gal = idleL * 0.264172; // liters → US gallons
-      var isTrip = (sensors.idleFuel == null && sensors.idleFuelTrip != null);
-      var pctTxt = "";
-      if (!isTrip && sensors.totalFuel && sensors.totalFuel > 0) {
-        var idlePct = (sensors.idleFuel / sensors.totalFuel) * 100;
-        pctTxt = ' <span style="color:'+C.soft+'; font-weight:400;">('+idlePct.toFixed(1)+'% of total)</span>';
-      }
-      var label = isTrip ? "Fuel used idling (trip)" : "Fuel used idling (lifetime)";
-      rows += readRow(label, '<span style="color:'+C.ink+'; font-weight:600;">'+ (gal >= 10 ? fmt(gal) : gal.toFixed(1)) +' gal'+pctTxt+'</span>');
     }
     if (sensors && sensors.oilLife != null) {
       var olc = sensors.oilLife < 15 ? C.red : (sensors.oilLife < 30 ? C.amber : C.green);
@@ -763,7 +741,7 @@ geotab.addin.jackMaintenance = function () {
     // A system zone: filled rounded rect in its status color + centered white label
     function zone(x, y, w, hgt, label, v, fontSize) {
       var fill = sysFill(v);
-      var op = sysStatus(v)==="green" ? "0.55" : "0.95"; // healthy slightly softer so reds/ambers pop
+      var op = sysStatus(v)==="green" ? "0.80" : "0.95"; // healthy still clearly colored
       return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+hgt+'" rx="7" fill="'+fill+'" opacity="'+op+'"/>' +
         '<text x="'+(x+w/2)+'" y="'+(y+hgt/2+3)+'" font-size="'+fontSize+'" font-weight="700" text-anchor="middle" fill="#ffffff" style="letter-spacing:.03em;">'+label+'</text>';
     }
