@@ -1,0 +1,16 @@
+{
+  "name": "DynastyJack Maintenance (Drive)",
+  "supportEmail": "support@dynastync.com",
+  "version": "1.0.0",
+  "items": [
+    {
+      "url": "https://jackofdynastync55555.github.io/Oil-reminders/addin/jack-maintenance-drive.html",
+      "path": "DriveAppLink/",
+      "menuName": {
+        "en": "Vehicle Maintenance"
+      },
+      "icon": "https://jackofdynastync55555.github.io/Oil-reminders/addin/wrench.svg"
+    }
+  ],
+  "isSigned": false
+}
