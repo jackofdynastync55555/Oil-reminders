@@ -1,0 +1,363 @@
+<div id="dm-root" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; -webkit-text-size-adjust:100%;">
+  <div id="dm-body" style="min-height:100vh; padding:14px 14px 40px;">
+    <div id="dm-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px;">
+      <div>
+        <div style="font-size:18px; font-weight:700;" id="dm-title">Fleet Maintenance</div>
+        <div style="font-size:12px;" id="dm-sub">Loading…</div>
+      </div>
+      <button id="dm-refresh" style="border-radius:10px; padding:9px 14px; font-size:14px; font-weight:600; cursor:pointer; -webkit-tap-highlight-color:transparent;">Refresh</button>
+    </div>
+    <div id="dm-content"></div>
+  </div>
+</div>
+
+<script>
+geotab.addin.dynastyDrive = function () {
+  "use strict";
+
+  // ---- theme (mobile: single clean dark-on-light, high contrast) -----
+  var C = {
+    page:"#f4f6f9", card:"#ffffff", card2:"#f0f3f7", ink:"#0f1b2d", soft:"#5b6b80",
+    faint:"#93a1b3", line:"#e2e8f0", brand:"#1f6fd6",
+    green:"#1f9d57", greenBg:"#e4f6ec", amber:"#c9820b", amberBg:"#fdf2dd",
+    red:"#d63a3a", redBg:"#fdeaea", shadow:"0 1px 3px rgba(15,27,45,0.08)"
+  };
+
+  var api, session, contentEl, subEl, titleEl;
+  var deviceGroups = {}, allGroups = [], groupChildren = {}, groupParent = {};
+  var isDriver = false, driverDeviceIds = [], currentUserName = "";
+
+  function apiCall(m, p) { return new Promise(function (res, rej){ api.call(m, p, res, rej); }); }
+  function multiCall(c) { return new Promise(function (res, rej){ api.multiCall(c, res, rej); }); }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+  function fmt(n){ return Math.round(n).toLocaleString(); }
+  function daysAgo(n){ var d=new Date(); d.setDate(d.getDate()-n); return d.toISOString(); }
+  var METERS_PER_UNIT = 1609.344, UNITS = "mi";
+  var DEFAULT_INTERVAL_MILES = 10000;
+  var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB"; // shared oil-reminder store (same as portal)
+
+  function safe(p, fb){ return Promise.resolve().then(function(){return p;}).then(function(v){return v;}).catch(function(e){ console.warn("call failed:", e&&e.message); return fb; }); }
+
+  // ---- device filtering (same rule as portal) ------------------------
+  function isRealGoDevice(x){
+    var active = !x.activeTo || new Date(x.activeTo) > new Date();
+    if (!active) return false;
+    var sn = (x.serialNumber||"").trim();
+    var hasSerial = sn.length>0 && !/^0+$/.test(sn) && sn.toUpperCase()!=="NOSERIALNUMBER";
+    var dt = (x.deviceType||"").toLowerCase();
+    var isCustom = dt.indexOf("custom")>=0 || dt.indexOf("untracked")>=0;
+    return hasSerial && !isCustom;
+  }
+
+  function getDevices(){
+    return apiCall("Get", { typeName:"Device" }).then(function (d){
+      var real = d.filter(isRealGoDevice);
+      deviceGroups = {};
+      real.forEach(function (dev){ deviceGroups[dev.id] = (dev.groups||[]).map(function(g){return g.id;}); });
+      return real;
+    });
+  }
+
+  function getGroups(){
+    return apiCall("Get", { typeName:"Group" }).then(function (groups){
+      allGroups = groups||[]; groupChildren = {}; groupParent = {};
+      allGroups.forEach(function (g){
+        (g.children||[]).forEach(function (c){
+          if (!groupChildren[g.id]) groupChildren[g.id]=[];
+          groupChildren[g.id].push(c.id); groupParent[c.id]=g.id;
+        });
+      });
+      return allGroups;
+    }).catch(function(){ allGroups=[]; return []; });
+  }
+
+  // Odometers per device (tight "now" window, always current)
+  function getOdometers(devices){
+    var now = new Date().toISOString();
+    var calls = devices.map(function (d){
+      return ["Get", { typeName:"StatusData", search:{ deviceSearch:{id:d.id}, diagnosticSearch:{id:"DiagnosticOdometerAdjustmentId"}, fromDate:now, toDate:now }}];
+    });
+    if (!calls.length) return Promise.resolve({});
+    return multiCall(calls).then(function (rs){
+      var m={}; rs.forEach(function (r,i){ m[devices[i].id] = (r&&r.length&&r[0].data!=null)?r[0].data:null; }); return m;
+    }).catch(function(){ var m={}; devices.forEach(function(d){m[d.id]=null;}); return m; });
+  }
+
+  // Active faults grouped by device, with severity
+  function getFaults(devices){
+    var call = apiCall("Get", { typeName:"FaultData", resultsLimit:5000, search:{ fromDate:daysAgo(30), toDate:new Date().toISOString() } })
+      .then(function (faults){
+        var active = faults.filter(function (f){
+          var a = f.faultState ? (f.faultState==="Active"||f.faultState==="PendingAndActive") : true;
+          return a && !f.dismissDateTime;
+        });
+        var by = {};
+        active.forEach(function (f){
+          var did = f.device && f.device.id; if (!did) return;
+          if (!by[did]) by[did] = { total:0, red:0, amber:0, items:[] };
+          var sev = (f.severity||"").toLowerCase();
+          var isRed = sev.indexOf("crit")>=0 || sev.indexOf("severe")>=0 || sev.indexOf("high")>=0;
+          by[did].total++; if (isRed) by[did].red++; else by[did].amber++;
+          by[did].items.push({ diagId:f.diagnostic&&f.diagnostic.id, code:(f.diagnostic&&(f.diagnostic.code||f.diagnostic.id))||"fault", severity:isRed?"critical":"warning", first:f.dateTime||null });
+        });
+        return by;
+      });
+    var timeout = new Promise(function (r){ setTimeout(function(){ r({__t:true}); }, 15000); });
+    return Promise.race([call, timeout]).then(function (r){ return (r&&r.__t)?{}:r; }).catch(function(){ return {}; });
+  }
+
+  // Oil reminder state (shared store with portal + script)
+  function getOilState(){
+    return apiCall("Get", { typeName:"AddInData", search:{ addInId:ADD_IN_ID } }).then(function (recs){
+      var by={};
+      recs.forEach(function (r){ var det = typeof r.details==="string"?JSON.parse(r.details):r.details; if (det&&det.deviceId) by[det.deviceId]={id:r.id, details:det}; });
+      return by;
+    }).catch(function(){ return {}; });
+  }
+
+  // Resolve diagnostic names for critical faults we want to show by name
+  var diagNameCache = {};
+  function resolveDiag(faultMap){
+    var ids={};
+    Object.keys(faultMap).forEach(function (did){ faultMap[did].items.forEach(function (it){ if (it.diagId && !diagNameCache[it.diagId]) ids[it.diagId]=true; }); });
+    var list = Object.keys(ids); if (!list.length) return Promise.resolve();
+    return multiCall(list.map(function (id){ return ["Get",{typeName:"Diagnostic", search:{id:id}}]; })).then(function (drs){
+      drs.forEach(function (dr,i){ var d0=dr&&dr[0]; diagNameCache[list[i]] = d0&&(d0.name||d0.code) || list[i]; });
+    }).catch(function(){});
+  }
+
+  // ---- health scoring (fault + oil) ----------------------------------
+  function score(device, odoMeters, faults, oilRec){
+    var level="green", reasons=[];
+    function bump(t){ if(t==="red")level="red"; else if(t==="amber"&&level!=="red")level="amber"; }
+    if (faults && faults.total>0){
+      if (faults.red>0){ bump("red"); reasons.push(faults.red+" critical fault"+(faults.red>1?"s":"")); }
+      if (faults.amber>0){ bump("amber"); reasons.push(faults.amber+" warning"+(faults.amber>1?"s":"")); }
+    }
+    var oil=null;
+    if (oilRec && odoMeters!=null){
+      var d=oilRec.details, interval=d.intervalMiles||DEFAULT_INTERVAL_MILES;
+      var since=(odoMeters-d.lastNotifiedMeters)/METERS_PER_UNIT, remaining=interval-since;
+      oil={ remaining:remaining, interval:interval, enabled:d.enabled!==false };
+      if (d.enabled!==false){
+        if (remaining<=0){ bump("red"); reasons.push("oil overdue"); }
+        else if (remaining<=interval*0.15){ bump("amber"); reasons.push("oil due soon"); }
+      }
+    }
+    if (odoMeters==null){ if(level==="green") level="amber"; reasons.push("no recent data"); }
+    return { level:level, reasons:reasons, faults:faults, oil:oil, odoMeters:odoMeters };
+  }
+
+  // ---- group helpers -------------------------------------------------
+  function groupWithDescendants(id){ var out={}, st=[id]; while(st.length){ var g=st.pop(); if(out[g])continue; out[g]=true; (groupChildren[g]||[]).forEach(function(c){st.push(c);}); } return out; }
+  var EXCLUDED = /^(powertrain and fuel type|asset type|asset information|asset purpose)$/i;
+  function groupNames(){ var m={}; allGroups.forEach(function(g){ m[g.id]=(g.name||"").trim(); }); return m; }
+
+  // ---- UI bits -------------------------------------------------------
+  function statusColors(level){
+    return level==="red" ? {fg:C.red,bg:C.redBg,label:"CRITICAL"} :
+           level==="amber" ? {fg:C.amber,bg:C.amberBg,label:"ATTENTION"} :
+           {fg:C.green,bg:C.greenBg,label:"OK"};
+  }
+
+  // Big status banner for the driver's own vehicle
+  function driverBanner(name, h){
+    var sc = statusColors(h.level);
+    var headline = h.level==="red" ? "Critical fault reported" :
+                   h.level==="amber" ? "Needs attention" : "No faults reported";
+    var sub = h.level==="green"
+      ? "No active fault codes. Still complete your normal pre-trip inspection."
+      : esc(h.reasons.join(" \u00b7 "));
+    // critical faults get a pulsing ring
+    var pulse = h.level==="red"
+      ? '<style>@keyframes dmpulse{0%{box-shadow:0 0 0 0 '+C.red+'66;}70%{box-shadow:0 0 0 16px '+C.red+'00;}100%{box-shadow:0 0 0 0 '+C.red+'00;}}</style>'
+      : '';
+    return pulse +
+      '<div style="background:'+sc.bg+'; border:2px solid '+sc.fg+'; border-radius:16px; padding:22px 18px; text-align:center; margin-bottom:16px;'+(h.level==="red"?' animation:dmpulse 1.6s infinite;':'')+'">' +
+        '<div style="font-size:13px; font-weight:700; letter-spacing:.08em; color:'+sc.fg+';">'+sc.label+'</div>' +
+        '<div style="font-size:22px; font-weight:800; color:'+C.ink+'; margin:8px 0 4px;">'+esc(name)+'</div>' +
+        '<div style="font-size:17px; font-weight:700; color:'+sc.fg+'; margin-bottom:8px;">'+headline+'</div>' +
+        '<div style="font-size:13.5px; color:'+C.soft+'; line-height:1.4;">'+sub+'</div>' +
+      '</div>';
+  }
+
+  // Fault detail list (names + severity)
+  function faultLines(h){
+    if (!h.faults || !h.faults.items.length) return "";
+    // stack duplicates
+    var groups={};
+    h.faults.items.forEach(function (it){
+      var nm = diagNameCache[it.diagId] || it.code || "Fault";
+      var key = nm+"|"+it.severity;
+      if (!groups[key]) groups[key]={nm:nm, sev:it.severity, count:0};
+      groups[key].count++;
+    });
+    var arr = Object.keys(groups).map(function(k){return groups[k];});
+    arr.sort(function(a,b){ if((a.sev==="critical")!==(b.sev==="critical")) return a.sev==="critical"?-1:1; return b.count-a.count; });
+    return '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:14px 16px; margin-bottom:16px; box-shadow:'+C.shadow+';">' +
+      '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:8px;">Active faults</div>' +
+      arr.map(function (g){
+        var c = g.sev==="critical"?C.red:C.amber;
+        return '<div style="display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid '+C.line+';">' +
+          '<span style="width:10px;height:10px;border-radius:50%;background:'+c+';flex:none;"></span>' +
+          '<span style="flex:1; font-size:14px; color:'+C.ink+'; font-weight:600;">'+esc(g.nm)+(g.count>1?' \u00d7'+g.count:'')+'</span>' +
+          '<span style="font-size:11px; font-weight:700; color:'+c+';">'+g.sev.toUpperCase()+'</span>' +
+        '</div>';
+      }).join("") +
+    '</div>';
+  }
+
+  // Compact asset row for the manager list
+  function assetRow(name, h){
+    var sc = statusColors(h.level);
+    var oilTxt = h.oil ? (h.oil.remaining<=0 ? "Oil overdue" : fmt(Math.max(0,h.oil.remaining))+" "+UNITS+" to oil") : "";
+    return '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-left:5px solid '+sc.fg+'; border-radius:12px; padding:13px 15px; margin-bottom:9px; box-shadow:'+C.shadow+';">' +
+      '<div style="display:flex; align-items:center; gap:10px;">' +
+        '<span style="width:13px;height:13px;border-radius:50%;background:'+sc.fg+';flex:none;"></span>' +
+        '<span style="flex:1; font-size:15px; font-weight:700; color:'+C.ink+';">'+esc(name)+'</span>' +
+        '<span style="font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; background:'+sc.bg+'; color:'+sc.fg+';">'+sc.label+'</span>' +
+      '</div>' +
+      (h.reasons.length||oilTxt ? '<div style="font-size:12.5px; color:'+C.soft+'; margin-top:6px; margin-left:23px;">'+esc(h.reasons.join(" \u00b7 "))+(oilTxt&&h.reasons.length?" \u00b7 ":"")+esc(oilTxt)+'</div>' : '') +
+    '</div>';
+  }
+
+  // ---- render: manager view -----------------------------------------
+  function renderManager(scored){
+    // sort worst-first
+    var order={red:0,amber:1,green:2};
+    scored.sort(function(a,b){ if(order[a.h.level]!==order[b.h.level]) return order[a.h.level]-order[b.h.level]; return ((b.h.faults&&b.h.faults.total)||0)-((a.h.faults&&a.h.faults.total)||0); });
+
+    // "Next Up" = top upcoming services (oil due soonest, and any red)
+    var upcoming = scored.filter(function (s){ return s.h.level!=="green" || (s.h.oil && s.h.oil.remaining <= s.h.oil.interval*0.25); });
+    upcoming.sort(function (a,b){
+      var ao = a.h.oil?a.h.oil.remaining:1e9, bo = b.h.oil?b.h.oil.remaining:1e9;
+      var ar = a.h.level==="red"?-1e6:0, br = b.h.level==="red"?-1e6:0;
+      return (ao+ar)-(bo+br);
+    });
+    var nextUp = upcoming.slice(0,3);
+
+    var html = "";
+    // counts
+    var counts={red:0,amber:0,green:0}; scored.forEach(function(s){counts[s.h.level]++;});
+    html += '<div style="display:flex; gap:8px; margin-bottom:16px;">' +
+      miniStat(counts.red,"Critical",C.red) + miniStat(counts.amber,"Attention",C.amber) + miniStat(counts.green,"OK",C.green) +
+    '</div>';
+
+    if (nextUp.length){
+      html += '<div style="font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:'+C.brand+'; margin:6px 2px 10px;">\u26A1 Next Up</div>';
+      nextUp.forEach(function (s){ html += assetRow(s.name, s.h); });
+      html += '<div style="height:14px;"></div>';
+      html += '<div style="font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:'+C.soft+'; margin:6px 2px 10px;">All assets</div>';
+    }
+    scored.forEach(function (s){ html += assetRow(s.name, s.h); });
+    if (!scored.length) html = '<div style="text-align:center; color:'+C.soft+'; padding:50px 20px;">No assets found in your groups.</div>';
+    contentEl.innerHTML = html;
+  }
+  function miniStat(n,label,fg){
+    return '<div style="flex:1; background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 8px; text-align:center; box-shadow:'+C.shadow+';">' +
+      '<div style="font-size:24px; font-weight:800; color:'+fg+';">'+n+'</div>' +
+      '<div style="font-size:11px; color:'+C.soft+'; margin-top:2px;">'+label+'</div></div>';
+  }
+
+  // ---- render: driver view ------------------------------------------
+  function renderDriver(scored){
+    // driver sees their assigned vehicle(s) — usually one
+    if (!scored.length){
+      contentEl.innerHTML = '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:30px 20px; text-align:center; color:'+C.soft+';">No vehicle is currently assigned to you. Once you\u2019re in a vehicle, its status will appear here.</div>';
+      return;
+    }
+    var html = "";
+    scored.forEach(function (s){
+      html += driverBanner(s.name, s.h);
+      html += faultLines(s.h);
+      // oil status line
+      if (s.h.oil){
+        var oc = s.h.oil.remaining<=0?C.red:(s.h.oil.remaining<=s.h.oil.interval*0.15?C.amber:C.green);
+        var otxt = s.h.oil.remaining<=0 ? "Oil change overdue by "+fmt(-s.h.oil.remaining)+" "+UNITS : fmt(Math.max(0,s.h.oil.remaining))+" "+UNITS+" until oil change";
+        html += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:14px 16px; box-shadow:'+C.shadow+'; display:flex; justify-content:space-between; align-items:center;">' +
+          '<span style="font-size:14px; color:'+C.soft+';">Oil change</span><span style="font-size:14px; font-weight:700; color:'+oc+';">'+esc(otxt)+'</span></div>';
+      }
+    });
+    // safety reminder footer
+    html += '<div style="font-size:12px; color:'+C.faint+'; text-align:center; margin-top:18px; line-height:1.5;">This reflects fault codes reported by the vehicle, not a physical inspection. Always complete your required pre-trip inspection.</div>';
+    contentEl.innerHTML = html;
+  }
+
+  // ---- role detection + assigned vehicle ----------------------------
+  // Determine if the current user is a driver, and which device(s) they're on.
+  function detectRoleAndDevices(devices){
+    // session.userName is the logged-in user. Try to find their User record.
+    return apiCall("Get", { typeName:"User", search:{ name: (session && session.userName) || "" } }).then(function (users){
+      var u = users && users[0];
+      currentUserName = u ? ((u.firstName||"")+" "+(u.lastName||"")).trim()||u.name : (session&&session.userName)||"";
+      // Heuristic: a user flagged as a driver (isDriver) is treated as a driver.
+      isDriver = !!(u && u.isDriver);
+      // If driver, find the device they're currently associated with via DeviceStatusInfo driver match,
+      // else fall back to no specific assignment.
+      if (isDriver && u) {
+        return apiCall("Get", { typeName:"DeviceStatusInfo" }).then(function (dsi){
+          var mine = (dsi||[]).filter(function (s){ return s.driver && s.driver.id === u.id && s.device; })
+                              .map(function (s){ return s.device.id; });
+          driverDeviceIds = mine;
+          return;
+        }).catch(function(){ driverDeviceIds=[]; });
+      }
+      return;
+    }).catch(function(){ isDriver=false; });
+  }
+
+  // ---- orchestration -------------------------------------------------
+  function reload(){
+    contentEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:50px 20px;">Loading\u2026</div>';
+    var devices=[];
+    safe(getDevices(), []).then(function (d){
+      devices = d;
+      return Promise.all([ safe(getGroups(),[]), safe(detectRoleAndDevices(devices), undefined) ]);
+    }).then(function () {
+      return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}) ]);
+    }).then(function (res) {
+      var odoMap=res[0], faultMap=res[1], oilMap=res[2];
+      return safe(resolveDiag(faultMap), undefined).then(function(){ return {odoMap:odoMap, faultMap:faultMap, oilMap:oilMap}; });
+    }).then(function (data) {
+      var scored = devices.map(function (dev){
+        return { id:dev.id, name:dev.name, h:score(dev, data.odoMap[dev.id], data.faultMap[dev.id], data.oilMap[dev.id]) };
+      });
+      if (isDriver) {
+        var mine = scored.filter(function (s){ return driverDeviceIds.indexOf(s.id) >= 0; });
+        titleEl.textContent = "My Vehicle";
+        subEl.textContent = currentUserName ? ("Driver: "+currentUserName) : "Driver view";
+        renderDriver(mine);
+      } else {
+        titleEl.textContent = "Fleet Maintenance";
+        var red = scored.filter(function(s){return s.h.level==="red";}).length;
+        subEl.textContent = scored.length+" assets" + (red? " \u00b7 "+red+" critical" : "");
+        renderManager(scored);
+      }
+    }).catch(function (err) {
+      contentEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:40px 20px;">Couldn\u2019t load: '+esc(err&&err.message?err.message:String(err))+'</div>';
+    });
+  }
+
+  return {
+    initialize: function (freshApi, freshState, cb) {
+      // Signal ready FIRST so Drive never hangs.
+      try { cb && cb(); } catch(e){}
+      try {
+        api = freshApi; session = freshState;
+        contentEl = document.getElementById("dm-content");
+        subEl = document.getElementById("dm-sub");
+        titleEl = document.getElementById("dm-title");
+        var body = document.getElementById("dm-body");
+        if (body){ body.style.background = C.page; body.style.color = C.ink; }
+        var rf = document.getElementById("dm-refresh");
+        if (rf){ rf.style.background=C.card; rf.style.border="1px solid "+C.line; rf.style.color=C.brand; rf.addEventListener("click", reload); }
+      } catch(e){ console.warn("init error:", e&&e.message); }
+    },
+    focus: function (freshApi, freshState) {
+      api = freshApi; session = freshState;
+      reload(); // reload on every focus = near-real-time critical alert on app open
+    },
+    blur: function () {}
+  };
+};
+</script>
