@@ -750,7 +750,7 @@ geotab.addin.jackMaintenance = function () {
 
   // TEMP: shows the raw diagnostic names+values this asset reported, so tire/sensor
   // matching can be tuned to the fleet's actual naming. Remove once dialed in.
-  var SHOW_DEBUG = true;
+  var SHOW_DEBUG = false;
   function debugBlock(sensors) {
     if (!SHOW_DEBUG || !sensors || !sensors._raw || !sensors._raw.length) return "";
     var rows = sensors._raw.map(function (r) {
