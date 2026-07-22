@@ -141,6 +141,43 @@ async function getOdometerMeters(client, deviceId) {
   return data[0].data;
 }
 
+// Oil life remaining (%) from the vehicle's own monitor. Matched by diagnostic
+// name since the id isn't a fixed KnownId across vehicles. Returns null if absent.
+const oilLifeDiagCache = { ids: null };
+async function getOilLifePct(client, deviceId) {
+  const from = new Date(Date.now() - 7 * 86400000).toISOString();
+  const to = new Date().toISOString();
+  try {
+    const data = await client.call("Get", {
+      typeName: "StatusData",
+      resultsLimit: 500,
+      search: { deviceSearch: { id: deviceId }, fromDate: from, toDate: to },
+    });
+    if (!data || !data.length) return null;
+    // Need diagnostic names; fetch/caches names for ids we see
+    const ids = {};
+    data.forEach((sd) => { if (sd.diagnostic && sd.diagnostic.id) ids[sd.diagnostic.id] = true; });
+    const idList = Object.keys(ids);
+    const nameById = {};
+    for (const id of idList) {
+      const dr = await client.call("Get", { typeName: "Diagnostic", search: { id } });
+      nameById[id] = dr && dr[0] ? (dr[0].name || dr[0].code || id) : id;
+    }
+    // latest value whose name matches oil life
+    let best = null;
+    data.forEach((sd) => {
+      const nm = (nameById[sd.diagnostic && sd.diagnostic.id] || "").toLowerCase();
+      if (/engine oil life remaining|oil life/.test(nm)) {
+        const t = sd.dateTime ? new Date(sd.dateTime).getTime() : 0;
+        if (!best || t > best.t) best = { t, v: sd.data };
+      }
+    });
+    return best ? best.v : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getState(client) {
   const records = await client.call("Get", {
     typeName: "AddInData",
@@ -236,7 +273,7 @@ async function processAccount(account) {
 
   const dueDigest = [];     // reached interval — auto-reset + unconfirmed warning
   const upcoming500 = [];   // 500 mi out
-  const upcoming100 = [];   // 100 mi out
+  const upcoming250 = [];   // 250 mi out
   const serviced = [];      // vehicles flagged 'Mark serviced now' in the Add-In
   const odometerByDevice = {}; // for custom distance reminders
 
@@ -282,31 +319,35 @@ async function processAccount(account) {
     const remainingUnits = remainingMeters / METERS_PER_UNIT;
 
     const STAGE_500 = 500 * METERS_PER_UNIT;
-    const STAGE_100 = 100 * METERS_PER_UNIT;
-    if (!details.stagesSent) details.stagesSent = {}; // { s500, s100 }
+    const STAGE_250 = 250 * METERS_PER_UNIT;
+    if (!details.stagesSent) details.stagesSent = {}; // { s500, s250 }
 
     if (sinceLast >= intervalMeters) {
       // Due: auto-reset + "may not have been serviced" warning
+      const oilLife = await getOilLifePct(client, device.id);
       dueDigest.push({
         name: device.name,
         currentUnits: odoMeters / METERS_PER_UNIT,
         sinceLastUnits: sinceLast / METERS_PER_UNIT,
         intervalUnits: intervalMeters / METERS_PER_UNIT,
+        oilLife: oilLife,
       });
       details.lastNotifiedMeters = odoMeters;
       details.lastNotifiedDate = new Date().toISOString();
       details.stagesSent = {}; // reset stage flags for the new cycle
       if (!details.history) details.history = [];
-      details.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "auto" });
+      details.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "auto", oilLife: oilLife });
       await saveState(client, existing, details);
       console.log(`    ${device.name}: DUE — auto-reset (service not confirmed)`);
-    } else if (remainingMeters <= STAGE_100 && !details.stagesSent.s100) {
-      upcoming100.push({ name: device.name, remainingUnits: remainingUnits });
-      details.stagesSent.s100 = true;
+    } else if (remainingMeters <= STAGE_250 && !details.stagesSent.s250) {
+      const oilLife = await getOilLifePct(client, device.id);
+      upcoming250.push({ name: device.name, remainingUnits: remainingUnits, oilLife: oilLife });
+      details.stagesSent.s250 = true;
       await saveState(client, existing, details);
-      console.log(`    ${device.name}: 100-${UNITS} reminder sent`);
+      console.log(`    ${device.name}: 250-${UNITS} reminder sent`);
     } else if (remainingMeters <= STAGE_500 && !details.stagesSent.s500) {
-      upcoming500.push({ name: device.name, remainingUnits: remainingUnits });
+      const oilLife = await getOilLifePct(client, device.id);
+      upcoming500.push({ name: device.name, remainingUnits: remainingUnits, oilLife: oilLife });
       details.stagesSent.s500 = true;
       await saveState(client, existing, details);
       console.log(`    ${device.name}: 500-${UNITS} reminder sent`);
@@ -343,10 +384,10 @@ async function processAccount(account) {
   const to = account.emailTo;
   if (to) {
     if (upcoming500.length > 0) await sendStageEmail(label, to, "500", upcoming500);
-    if (upcoming100.length > 0) await sendStageEmail(label, to, "100", upcoming100);
+    if (upcoming250.length > 0) await sendStageEmail(label, to, "250", upcoming250);
     if (dueDigest.length > 0) await sendDueEmail(label, to, dueDigest);
   }
-  if (!upcoming500.length && !upcoming100.length && !dueDigest.length) {
+  if (!upcoming500.length && !upcoming250.length && !dueDigest.length) {
     console.log(`  No oil reminders due this run.`);
   }
 
@@ -360,12 +401,13 @@ async function processAccount(account) {
 
 // 500/100 upcoming reminder email
 async function sendStageEmail(label, to, stage, vehicles) {
+  const oilTxt = (v) => v.oilLife != null ? ` — oil life remaining: ${Math.round(v.oilLife)}%` : "";
   const lines = vehicles.map(
-    (v) => `\u2022 ${v.name} — ${Math.round(v.remainingUnits)} ${UNITS} until oil change due`
+    (v) => `\u2022 ${v.name} — ${Math.round(v.remainingUnits)} ${UNITS} until oil change due${oilTxt(v)}`
   );
   const heading = stage === "500"
     ? `Oil service coming up (within 500 ${UNITS}):`
-    : `Oil service due soon (within 100 ${UNITS}):`;
+    : `Oil service due soon (within 250 ${UNITS}):`;
   const body = [heading, ``, ...lines, ``,
     `This is an advance reminder — no action needed in Geotab.`,
     `The system will track these automatically.`,
@@ -380,8 +422,9 @@ async function sendStageEmail(label, to, stage, vehicles) {
 
 // At-interval email: auto-reset happened, but service is NOT confirmed
 async function sendDueEmail(label, to, vehicles) {
+  const oilTxt = (v) => v.oilLife != null ? ` — oil life remaining: ${Math.round(v.oilLife)}%` : "";
   const lines = vehicles.map(
-    (v) => `\u2022 ${v.name} — reached ${Math.round(v.intervalUnits).toLocaleString()} ${UNITS} interval at ${Math.round(v.currentUnits).toLocaleString()} ${UNITS}`
+    (v) => `\u2022 ${v.name} — reached ${Math.round(v.intervalUnits).toLocaleString()} ${UNITS} interval at ${Math.round(v.currentUnits).toLocaleString()} ${UNITS}${oilTxt(v)}`
   );
   const body = [
     `The following vehicle(s) have reached their oil change interval and the`,
@@ -435,7 +478,7 @@ async function processCustomReminders(client, account, label, odometerByDevice) 
       // reset baseline + log history
       if (!d.history) d.history = [];
       const odo = odometerByDevice ? odometerByDevice[d.deviceId] : null;
-      d.history.push({ date: new Date().toISOString(), odoMeters: d.type === "mi" ? odo : null });
+      d.history.push({ date: new Date().toISOString(), odoMeters: d.type === "mi" ? odo : null, source: "auto" });
       if (d.type === "mi" && odo != null) d.baselineMeters = odo;
       d.baselineDate = new Date().toISOString();
       const entity = { id: rec.id, addInId: CUSTOM_ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details: d };
