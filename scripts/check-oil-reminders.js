@@ -453,11 +453,20 @@ async function processCustomReminders(client, account, label, odometerByDevice) 
     typeName: "AddInData",
     search: { addInId: CUSTOM_ADD_IN_ID },
   });
-  const dueCustom = [];
+
+  // find the global default recipients record, if set
+  let globalDefaultEmail = null;
+  for (const rec of records) {
+    const d = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
+    if (d && d.settingsKey === "global") { globalDefaultEmail = d.defaultEmailTo || null; break; }
+  }
+
+  // due reminders grouped by resolved recipient list
+  const byRecipient = {}; // recipientString -> [ {label, device, at} ]
 
   for (const rec of records) {
     const d = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
-    if (!d || d.enabled === false) continue;
+    if (!d || d.settingsKey === "global" || d.enabled === false || !d.deviceId) continue;
 
     let isDue = false;
     let atText = "";
@@ -474,7 +483,12 @@ async function processCustomReminders(client, account, label, odometerByDevice) 
     }
 
     if (isDue) {
-      dueCustom.push({ label: d.label || "Reminder", device: d.deviceName || d.deviceId, at: atText });
+      // resolve recipient: per-reminder override → global default → account default
+      const recipient = (d.emailTo && d.emailTo.trim()) || globalDefaultEmail || account.emailTo || null;
+      const key = recipient || "__none__";
+      if (!byRecipient[key]) byRecipient[key] = [];
+      byRecipient[key].push({ label: d.label || "Reminder", device: d.deviceName || d.deviceId, at: atText });
+
       // reset baseline + log history
       if (!d.history) d.history = [];
       const odo = odometerByDevice ? odometerByDevice[d.deviceId] : null;
@@ -486,31 +500,33 @@ async function processCustomReminders(client, account, label, odometerByDevice) 
     }
   }
 
-  if (dueCustom.length > 0) {
-    const to = account.emailTo;
-    if (to) {
-      const lines = dueCustom.map((c) => `\u2022 ${c.device} — ${c.label}${c.at ? " (" + c.at + ")" : ""}`);
-      const body = [
-        `The following custom maintenance reminder(s) are due:`,
-        ``,
-        ...lines,
-        ``,
-        `Counters have been reset automatically.`,
-        ``,
-        `— Automated reminder from Dynasty Communications fleet monitoring`,
-      ].join("\n");
-      await transporter.sendMail({
-        from: EMAIL_FROM,
-        to,
-        subject: `Maintenance due: ${dueCustom.length} custom reminder(s)${label ? " — " + label : ""}`,
-        text: body,
-      });
-      console.log(`  Custom reminder email sent to ${to} (${dueCustom.length})`);
-    } else {
-      console.log(`  ${dueCustom.length} custom reminder(s) due but no email set`);
+  const recipientKeys = Object.keys(byRecipient);
+  if (!recipientKeys.length) { console.log(`  No custom reminders due.`); return; }
+
+  for (const key of recipientKeys) {
+    const items = byRecipient[key];
+    if (key === "__none__") {
+      console.log(`  ${items.length} custom reminder(s) due but no recipient resolved — skipping email`);
+      continue;
     }
-  } else {
-    console.log(`  No custom reminders due.`);
+    const lines = items.map((c) => `\u2022 ${c.device} — ${c.label}${c.at ? " (" + c.at + ")" : ""}`);
+    const body = [
+      `The following custom maintenance reminder(s) are due:`,
+      ``,
+      ...lines,
+      ``,
+      `Counters have been reset automatically.`,
+      ``,
+      `— Automated reminder from Dynasty Communications fleet monitoring`,
+    ].join("\n");
+    // nodemailer accepts comma-separated recipients directly
+    await transporter.sendMail({
+      from: EMAIL_FROM,
+      to: key,
+      subject: `Maintenance due: ${items.length} custom reminder(s)${label ? " — " + label : ""}`,
+      text: body,
+    });
+    console.log(`  Custom reminder email sent to ${key} (${items.length})`);
   }
 }
 
