@@ -47,13 +47,13 @@ var THEMES = {
     page:"#0f1620", card:"#18212e", card2:"#1e2836", ink:"#e8eef5", soft:"#94a3b8",
     faint:"#64748b", line:"#2a3646", brand:"#3b9dff", brandSoft:"#12283f", track:"#243040",
     green:"#3ecb7f", greenBg:"#123026", amber:"#f0b24a", amberBg:"#33280f",
-    red:"#ff6b63", redBg:"#3a1815", shadow:"0 2px 8px rgba(0,0,0,.4)"
+    red:"#ff6b63", redBg:"#3a1815", device:"#5cc5e0", deviceBg:"#122e38", shadow:"0 2px 8px rgba(0,0,0,.4)"
   },
   light: {
     page:"#f5f6f8", card:"#ffffff", card2:"#f8fafc", ink:"#16202b", soft:"#64748b",
     faint:"#94a3b8", line:"#e6eaf0", brand:"#0b5fa5", brandSoft:"#e8f1fa", track:"#eef1f5",
     green:"#178a54", greenBg:"#e7f5ee", amber:"#b26a00", amberBg:"#fbf0dc",
-    red:"#c0362f", redBg:"#fbe6e4", shadow:"0 1px 3px rgba(0,0,0,.08)"
+    red:"#c0362f", redBg:"#fbe6e4", device:"#0e7fa0", deviceBg:"#e2f4fa", shadow:"0 1px 3px rgba(0,0,0,.08)"
   }
 };
 var theme = "dark";
@@ -543,7 +543,12 @@ geotab.addin.jackMaintenance = function () {
   // ---- health scoring ------------------------------------------------
   function scoreVehicle(device, odoMeters, faults, oil, sensors) {
     var reasons = [], level = "green";
-    function bump(t){ if(t==="red") level="red"; else if(t==="amber"&&level!=="red") level="amber"; }
+    // level precedence: green < device < amber < red
+    function bump(t){
+      if (t==="red") level="red";
+      else if (t==="amber" && level!=="red") level="amber";
+      else if (t==="device" && level==="green") level="device";
+    }
     if (faults && faults.total>0) {
       // Vehicle (mechanical) faults drive the real status
       var vRed = 0, vAmber = 0;
@@ -553,9 +558,9 @@ geotab.addin.jackMaintenance = function () {
       });
       if (vRed>0){ bump("red"); reasons.push(vRed+" critical fault"+(vRed>1?"s":"")); }
       if (vAmber>0){ bump("amber"); reasons.push(vAmber+" fault"+(vAmber>1?"s":"")); }
-      // Device/telematics faults are minor — never escalate past amber, labeled clearly
+      // Device/telematics faults are informational — their own "device" level, below amber
       var devCount = faults.deviceCount || 0;
-      if (devCount>0){ bump("amber"); reasons.push(devCount+" device fault"+(devCount>1?"s":"")); }
+      if (devCount>0){ bump("device"); reasons.push(devCount+" device issue"+(devCount>1?"s":"")); }
     }
     var oilInfo = null;
     if (oil && odoMeters!=null) {
@@ -608,33 +613,39 @@ geotab.addin.jackMaintenance = function () {
     var scored = devices.map(function (d) {
       return { device:d, health:scoreVehicle(d, odoMap[d.id], faultMap[d.id], oilMap[d.id], sensorMap[d.id]) };
     });
-    var order = { red:0, amber:1, green:2 };
+    var order = { red:0, amber:1, device:2, green:3 };
     scored.sort(function (a,b) {
       if (order[a.health.level]!==order[b.health.level]) return order[a.health.level]-order[b.health.level];
       return ((b.health.faults&&b.health.faults.total)||0) - ((a.health.faults&&a.health.faults.total)||0);
     });
-    var counts = { red:0, amber:0, green:0 };
+    var counts = { red:0, amber:0, device:0, green:0 };
     scored.forEach(function (s){ counts[s.health.level]++; });
 
     var html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">' +
       sumCard(counts.red,"Need service",C.red,"red") + sumCard(counts.amber,"Watch",C.amber,"amber") +
+      sumCard(counts.device,"Device issues",C.device,"device") +
       sumCard(counts.green,"Healthy",C.green,"green") + sumCard(devices.length,"Total assets",C.ink,null) + '</div>';
 
     // Apply filter
     var visible = healthFilter ? scored.filter(function (s){ return s.health.level===healthFilter; }) : scored;
 
     if (healthFilter) {
-      var fname = healthFilter==="red"?"Need service":healthFilter==="amber"?"Watch":"Healthy";
+      var fname = healthFilter==="red"?"Need service":healthFilter==="amber"?"Watch":healthFilter==="device"?"Device issues":"Healthy";
       html += '<div style="display:flex; align-items:center; gap:10px; margin:4px 2px 12px;">' +
         '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Showing: '+fname+'</span>' +
         '<button id="clearFilter" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:6px; padding:3px 10px; font-size:12px; cursor:pointer;">Clear filter</button></div>';
       visible.forEach(function (s) { html += assetCard(s.device, s.health, sensorMap[s.device.id]); });
     } else {
-      var anyAttention = scored.some(function (s){ return s.health.level!=="green"; });
-      if (anyAttention) html += sectionLabel("Needs attention");
+      var anyReal = scored.some(function (s){ return s.health.level==="red"||s.health.level==="amber"; });
+      var lastLevel = null;
       scored.forEach(function (s, idx) {
-        if (idx>0 && scored[idx-1].health.level!=="green" && s.health.level==="green") html += sectionLabel("Healthy");
+        var lv = s.health.level;
+        // section headers as the level transitions
+        if (idx===0 && anyReal && (lv==="red"||lv==="amber")) html += sectionLabel("Needs attention");
+        if (lastLevel!=="device" && lv==="device") html += sectionLabel("Device issues \u00b7 no vehicle impact");
+        if (lastLevel!=="green" && lv==="green") html += sectionLabel("Healthy");
         html += assetCard(s.device, s.health, sensorMap[s.device.id]);
+        lastLevel = lv;
       });
     }
 
@@ -679,11 +690,18 @@ geotab.addin.jackMaintenance = function () {
   function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g,"_"); }
 
   function assetCard(device, h, sensors) {
-    var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:C.green;
+    var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:h.level==="device"?C.device:C.green;
     var chips = "";
     if (h.faults && h.faults.total>0) {
-      if (h.faults.red>0) chips += pill(h.faults.red+" critical", C.redBg, C.red)+" ";
-      if (h.faults.amber>0) chips += pill(h.faults.amber+" warning", C.amberBg, C.amber)+" ";
+      // separate vehicle faults from device/telematics faults
+      var vRed=0, vAmber=0, devCount=0;
+      (h.faults.items||[]).forEach(function (it){
+        if (it.isDevice) { devCount++; return; }
+        if (it.severity==="critical") vRed++; else vAmber++;
+      });
+      if (vRed>0) chips += pill(vRed+" critical", C.redBg, C.red)+" ";
+      if (vAmber>0) chips += pill(vAmber+" warning", C.amberBg, C.amber)+" ";
+      if (devCount>0) chips += pill(devCount+" device issue"+(devCount>1?"s":""), C.deviceBg, C.device)+" ";
     }
     if (h.oil && h.oil.enabled) {
       if (h.oil.remaining<=0) chips += pill("oil overdue", C.redBg, C.red)+" ";
@@ -848,7 +866,7 @@ geotab.addin.jackMaintenance = function () {
   // Top-down pickup with four individual tires (PSI) and system zones.
   function carDiagram(level, sys, sensors) {
     var bodyFill = level==="red"?C.redBg:level==="amber"?C.amberBg:C.greenBg;
-    var bodyStroke = level==="red"?C.red:level==="amber"?C.amber:C.green;
+    var bodyStroke = level==="red"?C.red:level==="amber"?C.amber:level==="device"?C.device:C.green;
 
     // Each system zone gets its OWN status color: green healthy, amber = warning
     // fault weight, red = critical. This sits on top of the overall body tint.
