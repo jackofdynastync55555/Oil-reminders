@@ -21,13 +21,11 @@
 
   <div id="tabs" style="display:flex; gap:4px; margin-bottom:20px; flex-wrap:wrap;">
     <button data-tab="health" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Fleet Health</button>
-    <button data-tab="faults" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Engine Faults</button>
     <button data-tab="oil" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Oil Reminders</button>
     <button data-tab="custom" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Custom Reminders</button>
   </div>
 
   <div id="health"></div>
-  <div id="faults" style="display:none;"></div>
   <div id="oil" style="display:none;"></div>
   <div id="custom" style="display:none;"></div>
 </div>
@@ -62,7 +60,7 @@ var theme = "dark";
 var C = THEMES[theme];
 
 geotab.addin.jackMaintenance = function () {
-  var api, toastEl, healthEl, oilEl, customEl, faultsEl, bodyEl, rootEl, groupSelectEl;
+  var api, toastEl, healthEl, oilEl, customEl, bodyEl, rootEl, groupSelectEl;
   var allGroups = [];        // raw group list
   var groupChildren = {};    // parentId -> [childId,...]
   var selectedGroupId = null; // null = whole fleet
@@ -1058,95 +1056,6 @@ geotab.addin.jackMaintenance = function () {
   }
   function cssIdSel(s) { return String(s).replace(/["\\]/g,"\\$&"); }
 
-  // ---- ENGINE FAULTS chart tab ---------------------------------------
-  function renderFaults(devices, faultMap) {
-    if (!faultsEl) return;
-    // aggregate per vehicle: total fault count + distinct code count
-    var rows = devices.map(function (d) {
-      var f = faultMap[d.id];
-      var total = f ? f.total : 0;
-      var codes = {};
-      if (f) f.items.forEach(function (it){ codes[(it.diagId||it.code)] = true; });
-      return { device:d, count: total, codeCount: Object.keys(codes).length };
-    }).filter(function (r){ return r.count > 0; })
-      .sort(function (a,b){ return b.count - a.count; });
-
-    if (!rows.length) {
-      faultsEl.innerHTML = '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:40px 20px; text-align:center; color:'+C.soft+';">No active engine faults in the selected scope. 🎉</div>';
-      return;
-    }
-
-    var maxCount = Math.max.apply(null, rows.map(function (r){ return r.count; }));
-    var maxCodes = Math.max.apply(null, rows.map(function (r){ return r.codeCount; }));
-
-    // chart dims
-    var n = rows.length;
-    var barW = Math.max(26, Math.min(60, Math.floor(760 / n)));
-    var gap = 14;
-    var chartW = Math.max(760, n * (barW + gap) + 60);
-    var chartH = 300, padT = 20, padB = 120, padL = 46, padR = 46;
-    var plotH = chartH - padT - padB;
-    var plotBottom = padT + plotH;
-
-    function xFor(i){ return padL + i*(barW+gap) + gap/2; }
-    function yCount(v){ return padT + plotH - (maxCount? (v/maxCount)*plotH : 0); }
-    function yCodes(v){ return padT + plotH - (maxCodes? (v/maxCodes)*plotH : 0); }
-
-    var svg = '<svg viewBox="0 0 '+chartW+' '+chartH+'" width="100%" xmlns="http://www.w3.org/2000/svg" style="min-width:'+chartW+'px;">';
-    // axes
-    svg += '<line x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+plotBottom+'" stroke="'+C.line+'"/>';
-    svg += '<line x1="'+(chartW-padR)+'" y1="'+padT+'" x2="'+(chartW-padR)+'" y2="'+plotBottom+'" stroke="'+C.line+'"/>';
-    svg += '<line x1="'+padL+'" y1="'+plotBottom+'" x2="'+(chartW-padR)+'" y2="'+plotBottom+'" stroke="'+C.line+'"/>';
-    // axis labels
-    svg += '<text x="'+padL+'" y="'+(padT-6)+'" font-size="10" fill="'+C.soft+'" text-anchor="middle">Faults</text>';
-    svg += '<text x="'+(chartW-padR)+'" y="'+(padT-6)+'" font-size="10" fill="'+C.soft+'" text-anchor="middle">Codes</text>';
-
-    // bars + value labels + x labels
-    rows.forEach(function (r, i) {
-      var x = xFor(i), h = plotBottom - yCount(r.count);
-      svg += '<rect data-fdev="'+esc(r.device.id)+'" x="'+x+'" y="'+yCount(r.count)+'" width="'+barW+'" height="'+Math.max(0,h)+'" rx="3" fill="'+C.brand+'" opacity="0.85" style="cursor:pointer;"/>';
-      svg += '<text x="'+(x+barW/2)+'" y="'+(yCount(r.count)-5)+'" font-size="11" font-weight="700" fill="'+C.ink+'" text-anchor="middle">'+r.count+'</text>';
-      // rotated vehicle name
-      var nm = r.device.name.length>16 ? r.device.name.slice(0,15)+"…" : r.device.name;
-      svg += '<text x="'+(x+barW/2)+'" y="'+(plotBottom+12)+'" font-size="10" fill="'+C.soft+'" text-anchor="end" transform="rotate(-45 '+(x+barW/2)+' '+(plotBottom+12)+')">'+esc(nm)+'</text>';
-    });
-
-    // line for code counts
-    var pts = rows.map(function (r,i){ return (xFor(i)+barW/2)+","+yCodes(r.codeCount); });
-    svg += '<polyline points="'+pts.join(" ")+'" fill="none" stroke="'+C.amber+'" stroke-width="2"/>';
-    rows.forEach(function (r,i){
-      var cx = xFor(i)+barW/2, cy = yCodes(r.codeCount);
-      svg += '<circle cx="'+cx+'" cy="'+cy+'" r="3.5" fill="'+C.amber+'"/>';
-      svg += '<text x="'+cx+'" y="'+(cy-8)+'" font-size="10" fill="'+C.amber+'" text-anchor="middle">'+r.codeCount+'</text>';
-    });
-    svg += '</svg>';
-
-    var legend = '<div style="display:flex; gap:18px; align-items:center; margin-top:6px; font-size:12px; color:'+C.soft+';">' +
-      '<span style="display:flex; align-items:center; gap:6px;"><span style="width:12px; height:12px; background:'+C.brand+'; border-radius:2px; display:inline-block;"></span>Fault count</span>' +
-      '<span style="display:flex; align-items:center; gap:6px;"><span style="width:16px; height:2px; background:'+C.amber+'; display:inline-block;"></span>Distinct fault codes</span>' +
-      '<span style="margin-left:auto;">Click a bar to open that vehicle</span>' +
-    '</div>';
-
-    faultsEl.innerHTML =
-      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; box-shadow:'+C.shadow+';">' +
-        '<div style="font-size:15px; font-weight:650; color:'+C.ink+'; margin-bottom:4px;">Active Engine Faults</div>' +
-        '<div style="font-size:12.5px; color:'+C.soft+'; margin-bottom:12px;">'+rows.length+' vehicle(s) with active faults, highest first.</div>' +
-        '<div style="overflow-x:auto;">'+svg+'</div>' +
-        legend +
-      '</div>';
-
-    // click a bar → switch to Fleet Health, expand that vehicle
-    faultsEl.querySelectorAll('[data-fdev]').forEach(function (bar) {
-      bar.addEventListener("click", function () {
-        expandedAsset = bar.getAttribute("data-fdev");
-        switchTab("health");
-        renderHealth(cache.devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
-        var el = document.getElementById("asset-"+cssId(expandedAsset));
-        if (el && el.scrollIntoView) el.scrollIntoView({ behavior:"smooth", block:"center" });
-      });
-    });
-  }
-
   // ---- theme + tabs --------------------------------------------------
   function $(id) { return document.getElementById(id); }
   function applyTheme() {
@@ -1169,8 +1078,7 @@ geotab.addin.jackMaintenance = function () {
   function styleTabs() {
     if (!healthEl) return;
     var active = "health";
-    if (faultsEl && faultsEl.style.display!=="none") active = "faults";
-    else if (oilEl && oilEl.style.display!=="none") active = "oil";
+    if (oilEl && oilEl.style.display!=="none") active = "oil";
     else if (customEl && customEl.style.display!=="none") active = "custom";
     else if (healthEl.style.display!=="none") active = "health";
     document.querySelectorAll("#tabs button").forEach(function (b) {
@@ -1181,7 +1089,6 @@ geotab.addin.jackMaintenance = function () {
   }
   function switchTab(name) {
     if (healthEl) healthEl.style.display = name==="health"?"":"none";
-    if (faultsEl) faultsEl.style.display = name==="faults"?"":"none";
     if (oilEl) oilEl.style.display = name==="oil"?"":"none";
     if (customEl) customEl.style.display = name==="custom"?"":"none";
     styleTabs();
@@ -1196,7 +1103,6 @@ geotab.addin.jackMaintenance = function () {
     var devices = filterByGroup(cache.allDevices);
     cache.devices = devices;
     renderHealth(devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
-    if (faultsEl) renderFaults(devices, cache.faultMap);
     if (oilEl) renderOil(devices, cache.odoMap, cache.oilMap, cache.sensorMap);
     if (customEl) renderCustom(devices, cache.odoMap, cache.customList);
   }
@@ -1227,7 +1133,7 @@ geotab.addin.jackMaintenance = function () {
         api = freshApi;
         bodyEl = document.getElementById("body"); rootEl = document.getElementById("root");
         healthEl = document.getElementById("health"); oilEl = document.getElementById("oil");
-        customEl = document.getElementById("custom"); faultsEl = document.getElementById("faults");
+        customEl = document.getElementById("custom");
         groupSelectEl = document.getElementById("groupSelect");
         toastEl = document.getElementById("toast");
         var rb = $("refreshBtn"); if (rb) rb.addEventListener("click", reloadAll);
