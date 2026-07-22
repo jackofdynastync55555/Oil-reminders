@@ -1,0 +1,15 @@
+{
+  "name": "DynastyJack Maintenance Drive",
+  "supportEmail": "support@dynastync.com",
+  "version": "1.0.2",
+  "items": [
+    {
+      "url": "https://jackofdynastync55555.github.io/Oil-reminders/addin/drive/index.html",
+      "path": "DriveAppLink/",
+      "menuName": {
+        "en": "Vehicle Maintenance"
+      }
+    }
+  ],
+  "isSigned": false
+}
