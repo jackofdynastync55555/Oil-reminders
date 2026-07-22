@@ -273,7 +273,6 @@ async function processAccount(account) {
 
   const dueDigest = [];     // reached interval — auto-reset + unconfirmed warning
   const upcoming500 = [];   // 500 mi out
-  const upcoming250 = [];   // 250 mi out
   const serviced = [];      // vehicles flagged 'Mark serviced now' in the Add-In
   const odometerByDevice = {}; // for custom distance reminders
 
@@ -319,8 +318,7 @@ async function processAccount(account) {
     const remainingUnits = remainingMeters / METERS_PER_UNIT;
 
     const STAGE_500 = 500 * METERS_PER_UNIT;
-    const STAGE_250 = 250 * METERS_PER_UNIT;
-    if (!details.stagesSent) details.stagesSent = {}; // { s500, s250 }
+    if (!details.stagesSent) details.stagesSent = {}; // { s500 }
 
     if (sinceLast >= intervalMeters) {
       // Due: auto-reset + "may not have been serviced" warning
@@ -339,12 +337,6 @@ async function processAccount(account) {
       details.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "auto", oilLife: oilLife });
       await saveState(client, existing, details);
       console.log(`    ${device.name}: DUE — auto-reset (service not confirmed)`);
-    } else if (remainingMeters <= STAGE_250 && !details.stagesSent.s250) {
-      const oilLife = await getOilLifePct(client, device.id);
-      upcoming250.push({ name: device.name, remainingUnits: remainingUnits, oilLife: oilLife });
-      details.stagesSent.s250 = true;
-      await saveState(client, existing, details);
-      console.log(`    ${device.name}: 250-${UNITS} reminder sent`);
     } else if (remainingMeters <= STAGE_500 && !details.stagesSent.s500) {
       const oilLife = await getOilLifePct(client, device.id);
       upcoming500.push({ name: device.name, remainingUnits: remainingUnits, oilLife: oilLife });
@@ -384,10 +376,9 @@ async function processAccount(account) {
   const to = account.emailTo;
   if (to) {
     if (upcoming500.length > 0) await sendStageEmail(label, to, "500", upcoming500);
-    if (upcoming250.length > 0) await sendStageEmail(label, to, "250", upcoming250);
     if (dueDigest.length > 0) await sendDueEmail(label, to, dueDigest);
   }
-  if (!upcoming500.length && !upcoming250.length && !dueDigest.length) {
+  if (!upcoming500.length && !dueDigest.length) {
     console.log(`  No oil reminders due this run.`);
   }
 
