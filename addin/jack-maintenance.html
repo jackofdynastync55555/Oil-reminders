@@ -39,7 +39,7 @@ var CUSTOM_ADD_IN_ID = "ajE5ODViNGYtOTJmZC0wODk"; // separate store for custom r
 var DEFAULT_INTERVAL_MILES = 10000;
 var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
-var FAULT_LOOKBACK_DAYS = 30;
+var FAULT_LOOKBACK_DAYS = 7;
 
 // ---- Theme palettes --------------------------------------------------
 var THEMES = {
@@ -512,6 +512,34 @@ geotab.addin.jackMaintenance = function () {
     return urgent ? "Diagnose with a scan tool and service promptly." : "Schedule an inspection to diagnose.";
   }
 
+  // ---- risk rating (hybrid) ------------------------------------------
+  // Trust Geotab's severity flag when present; use a heuristic only to fill gaps.
+  // Returns one of: critical, high, medium, low, ignore. This is SUGGESTED priority,
+  // not a certified severity rating — labeled as guidance in the UI.
+  var RISK_META = {
+    critical: { label:"Critical",  order:0, color:"red",   advise:"Address immediately — may be unsafe to operate." },
+    high:     { label:"High risk", order:1, color:"red",   advise:"Service soon — likely affects drivability or emissions." },
+    medium:   { label:"Medium",    order:2, color:"amber", advise:"Schedule an inspection at next convenience." },
+    low:      { label:"Low risk",  order:3, color:"amber", advise:"Monitor — minor issue, no immediate action needed." },
+    ignore:   { label:"Ignore",    order:4, color:"faint", advise:"No vehicle impact — safe to ignore unless it recurs often." }
+  };
+  function riskRating(fault) {
+    // fault: { name, code, severity ('critical'|'warning'), isDevice }
+    var name = (fault.name || fault.code || "").toLowerCase();
+    // Device/telematics faults have no vehicle impact → ignore
+    if (fault.isDevice) return "ignore";
+    // Geotab flagged it critical/high → trust that as at least "high", bump to critical for safety systems
+    if (fault.severity === "critical") {
+      if (/brak|abs|steer|coolant|overheat|oil pressure|fire|airbag/.test(name)) return "critical";
+      return "high";
+    }
+    // Heuristic fills the gap for non-critical (Geotab "warning"/unknown) faults, by system stakes
+    if (/brak|abs|steer|airbag|oil pressure|coolant|overheat/.test(name)) return "high";     // safety/engine-protection
+    if (/misfire|cylinder|trans|gear|clutch|shift|dpf|def|scr|nox|egr|turbo|boost/.test(name)) return "medium"; // drivability/emissions
+    if (/o2|oxygen|fuel trim|maf|map|evap|purge|sensor|lamp|light|bulb|tire|tpms|pressure|battery|voltage/.test(name)) return "low"; // minor/sensor
+    return "medium"; // unknown vehicle fault → default middle, not alarmist, not dismissive
+  }
+
   // ---- health scoring ------------------------------------------------
   function scoreVehicle(device, odoMeters, faults, oil, sensors) {
     var reasons = [], level = "green";
@@ -734,71 +762,68 @@ geotab.addin.jackMaintenance = function () {
       ? '<div style="margin-top:10px;"><div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:2px;">Readings</div>'+rows+'</div>'
       : '';
 
-    // ---- faults: categorize into VEHICLE faults vs DEVICE/telematics faults ----
-    // Device faults (GO unit, IOX, harness, "invalid device type") are minor/self-service
-    // and shouldn't sit at the same weight as real powertrain/brake faults.
+    // ---- faults: risk-rated, most-recent highlighted ----
     function isDeviceFault(name, code) {
       var s = ((name||"") + " " + (code||"")).toLowerCase();
-      return /telematics|device type|invalid device|iox|harness|go device|gps|antenna|watchdog|firmware|tamper|unplug|reader|add-on/.test(s);
+      return /telematics|device type|invalid device|iox|harness|go device|gps|antenna|watchdog|firmware|tamper|unplug|reader|add-on|internal reset/.test(s);
     }
     var faultList = "";
     if (h.faults && h.faults.items.length) {
       var groups = {};
+      var overallLatest = 0;
       h.faults.items.forEach(function (it) {
         var name = diagNameCache[it.diagId] || it.code || "Unknown fault";
+        var isDev = it.isDevice || isDeviceFault(name, it.code);
         var key = name + "|" + it.severity;
-        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, count:0, latest:null };
+        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, isDevice:isDev, count:0, latest:null };
         groups[key].count++;
         var t = it.first ? new Date(it.first).getTime() : 0;
         if (t && (!groups[key].latest || t > groups[key].latest)) groups[key].latest = t;
+        if (t > overallLatest) overallLatest = t;
       });
       var arr = Object.keys(groups).map(function (k){ return groups[k]; });
-      // split into vehicle vs device
-      var vehicleFaults = arr.filter(function (g){ return !isDeviceFault(g.name, g.code); });
-      var deviceFaults  = arr.filter(function (g){ return isDeviceFault(g.name, g.code); });
-      function sortFaults(list){ list.sort(function (a,b){
-        if ((a.severity==="critical")!==(b.severity==="critical")) return a.severity==="critical"?-1:1;
-        return b.count - a.count;
-      }); return list; }
-      sortFaults(vehicleFaults); sortFaults(deviceFaults);
+      // assign risk tier to each
+      arr.forEach(function (g){ g.risk = riskRating(g); });
+      // sort by risk order, then most-recent
+      arr.sort(function (a,b){
+        var ra = RISK_META[a.risk].order, rb = RISK_META[b.risk].order;
+        if (ra !== rb) return ra - rb;
+        return (b.latest||0) - (a.latest||0);
+      });
 
-      function renderFault(g, muted) {
-        var c = muted ? C.faint : (g.severity==="critical"?C.red:C.amber);
-        var bg = muted ? C.track : (g.severity==="critical"?C.redBg:C.amberBg);
+      function renderFault(g) {
+        var meta = RISK_META[g.risk];
+        var c = meta.color==="red"?C.red:(meta.color==="amber"?C.amber:C.faint);
+        var bg = meta.color==="red"?C.redBg:(meta.color==="amber"?C.amberBg:C.track);
+        var muted = g.risk==="ignore" || g.risk==="low";
         var when = g.latest ? new Date(g.latest).toLocaleDateString() : "";
+        var isMostRecent = g.latest && g.latest === overallLatest;
         var countBadge = g.count>1 ? ' <span style="font-size:11px; color:'+C.faint+';">\u00d7'+g.count+'</span>' : '';
-        var action = recommendedAction(g.name, g.severity);
-        return '<div style="padding:10px 0; border-top:1px solid '+C.line+';'+(muted?' opacity:0.78;':'')+'">' +
+        var action = g.risk==="ignore" ? meta.advise : recommendedAction(g.name, g.severity);
+        var recentTag = isMostRecent ? '<span style="font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; background:'+C.brand+'22; color:'+C.brand+'; margin-left:6px;">most recent</span>' : '';
+        return '<div style="padding:11px 0; border-top:1px solid '+C.line+';'+(muted?' opacity:0.82;':'')+(isMostRecent?' background:'+C.brand+'0d; border-left:3px solid '+C.brand+'; padding-left:10px; margin-left:-13px;':'')+'">' +
           '<div style="display:flex; align-items:center; gap:10px;">' +
             dot(c) +
-            '<div style="flex:1;"><div style="font-size:13px; color:'+(muted?C.soft:C.ink)+'; font-weight:600;">'+esc(g.name)+countBadge+'</div>' +
+            '<div style="flex:1;"><div style="font-size:13px; color:'+(muted?C.soft:C.ink)+'; font-weight:600;">'+esc(g.name)+countBadge+recentTag+'</div>' +
             '<div style="font-size:11.5px; color:'+C.soft+';">'+esc(g.code)+(when?" · latest "+when:"")+(g.count>1?" · "+g.count+" occurrences":"")+'</div></div>' +
-            pill(muted?"device":g.severity, bg, c) +
+            pill(meta.label, bg, c) +
           '</div>' +
           '<div style="margin-left:21px; margin-top:5px; font-size:12px; color:'+C.soft+'; border-left:2px solid '+c+'; padding-left:9px;">' +
-            '<span style="color:'+c+'; font-weight:600;">Recommended: </span>'+esc(action) +
+            '<span style="color:'+c+'; font-weight:600;">'+(g.risk==="ignore"?"Suggested: ":"Recommended: ")+'</span>'+esc(action) +
           '</div>' +
         '</div>';
       }
 
-      if (vehicleFaults.length) {
-        faultList += vehicleFaults.map(function (g){ return renderFault(g, false); }).join("");
-      } else {
-        faultList += '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No vehicle fault codes.</div>';
-      }
-      if (deviceFaults.length) {
-        faultList += '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.faint+'; margin:16px 0 2px; padding-top:12px; border-top:1px dashed '+C.line+';">Device / telematics \u00b7 minor</div>';
-        faultList += deviceFaults.map(function (g){ return renderFault(g, true); }).join("");
-      }
+      faultList = arr.map(renderFault).join("");
     } else {
-      faultList = '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No active fault codes.</div>';
+      faultList = '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No faults in the last 7 days.</div>';
     }
 
     return '<div style="padding:4px 16px 16px; background:'+C.card2+'; border-top:1px solid '+C.line+';">' +
       '<div style="display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start;">' +
         '<div style="flex:0 0 auto; width:210px; max-width:100%;">'+carSvg+sensorBlock+'</div>' +
         '<div style="flex:1; min-width:240px;">' +
-          '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:12px 0 2px;">Active faults &amp; recommendations</div>' +
+          '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:12px 0 2px;">Faults (last 7 days) \u00b7 suggested priority</div>' +
           faultList +
           debugBlock(sensors) +
         '</div>' +
