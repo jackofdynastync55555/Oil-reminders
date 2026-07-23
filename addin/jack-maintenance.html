@@ -1273,7 +1273,7 @@ geotab.addin.jackMaintenance = function () {
           '<label style="font-size:12px; color:'+C.soft+';">Email to<br><input id="cr-email" type="text" placeholder="optional" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:150px;"></label>' +
           '<button id="cr-add" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Add reminder</button>' +
         '</div>' +
-        '<div id="cr-mode-note" style="font-size:11.5px; color:'+C.soft+'; margin-top:10px; display:none;">A separate reminder will be created for each vehicle in the group, each tracking its own mileage.</div>' +
+        '<div id="cr-mode-note" style="font-size:11.5px; color:'+C.soft+'; margin-top:10px; display:none;">A separate reminder will be created for each vehicle in the group, each tracking its own mileage. Limit one custom reminder per asset — vehicles that already have one are skipped.</div>' +
       '</div>';
 
     // ---- existing reminders ----
@@ -1445,19 +1445,34 @@ geotab.addin.jackMaintenance = function () {
         };
       }
 
+      // One custom reminder per asset: build a set of devices that already have one
+      var hasReminder = {};
+      (customList || []).forEach(function (r) {
+        if (r.details && r.details.deviceId) hasReminder[r.details.deviceId] = true;
+      });
+
       if (mode === "group") {
         var groupId = $("cr-group").value;
         if (!groupId) { toast("Pick a group"); return; }
         var allowed = groupWithDescendants(groupId);
-        var targets = devices.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); });
-        if (!targets.length) { toast("No vehicles in that group"); return; }
+        var inGroup = devices.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); });
+        if (!inGroup.length) { toast("No vehicles in that group"); return; }
+        // skip assets that already have a custom reminder (one-per-asset cap)
+        var targets = inGroup.filter(function (dev){ return !hasReminder[dev.id]; });
+        var skipped = inGroup.length - targets.length;
+        if (!targets.length) { toast("All "+inGroup.length+" vehicles already have a custom reminder (limit 1 each)"); return; }
         var batchId = "batch_" + Date.now() + "_" + Math.floor(Math.random()*100000);
         var gName = (groupNameMap()[groupId] || "Group");
         Promise.all(targets.map(function (dev){ return persistCustom({ id:null, details:makeDet(dev.id, batchId, gName) }); }))
-          .then(function () { toast('"'+label+'" added to '+targets.length+' vehicle'+(targets.length===1?'':'s')); reloadAll(); });
+          .then(function () {
+            var msg = '"'+label+'" added to '+targets.length+' vehicle'+(targets.length===1?'':'s');
+            if (skipped>0) msg += " ("+skipped+" skipped — already had one)";
+            toast(msg); reloadAll();
+          });
       } else {
         var deviceId = $("cr-device").value;
         if (!deviceId) { toast("Pick an asset"); return; }
+        if (hasReminder[deviceId]) { toast((nameById[deviceId]||"That asset")+" already has a custom reminder (limit 1 per asset)"); return; }
         persistCustom({ id:null, details:makeDet(deviceId, null, null) }).then(function () { toast('"'+label+'" added'); reloadAll(); });
       }
     });
