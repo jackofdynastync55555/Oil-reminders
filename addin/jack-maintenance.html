@@ -625,7 +625,7 @@ geotab.addin.jackMaintenance = function () {
     var html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">' +
       sumCard(counts.red,"Need service",C.red,"red") + sumCard(counts.amber,"Watch",C.amber,"amber") +
       sumCard(counts.device,"Device issues",C.device,"device") +
-      sumCard(counts.green,"Healthy",C.green,"green") + sumCard(devices.length,"Total assets",C.ink,null) + '</div>';
+      sumCard(counts.green,"Healthy",C.green,"green") + sumCard(devices.length,"Total assets",C.ink,"all") + '</div>';
 
     // Apply filter
     var visible = healthFilter ? scored.filter(function (s){ return s.health.level===healthFilter; }) : scored;
@@ -657,7 +657,7 @@ geotab.addin.jackMaintenance = function () {
     document.querySelectorAll('[data-filter]').forEach(function (el) {
       el.addEventListener("click", function () {
         var f = el.getAttribute("data-filter");
-        healthFilter = (healthFilter===f || f==="") ? null : f;
+        healthFilter = (healthFilter===f || f==="" || f==="all") ? null : f;
         expandedAsset = null;
         renderHealth(devices, odoMap, faultMap, oilMap, sensorMap);
       });
@@ -678,7 +678,7 @@ geotab.addin.jackMaintenance = function () {
   }
 
   function sumCard(num, label, fg, filterKey) {
-    var active = healthFilter && healthFilter===filterKey;
+    var active = (filterKey==="all") ? (healthFilter===null) : (healthFilter && healthFilter===filterKey);
     var clickable = filterKey!=null;
     var border = active ? "2px solid "+fg : "1px solid "+C.line;
     return '<div '+(clickable?'data-filter="'+filterKey+'" ':'')+'style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:12px 16px; flex:1; min-width:120px; box-shadow:'+C.shadow+';'+(clickable?' cursor:pointer;':'')+'">' +
