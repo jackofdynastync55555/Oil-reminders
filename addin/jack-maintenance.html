@@ -52,14 +52,14 @@ var THEMES = {
   dark: {
     page:"#0f1620", card:"#18212e", card2:"#1e2836", ink:"#e8eef5", soft:"#94a3b8",
     faint:"#64748b", line:"#2a3646", brand:"#3b9dff", brandSoft:"#12283f", track:"#243040",
-    green:"#3ecb7f", greenBg:"#123026", amber:"#f0b24a", amberBg:"#33280f", lowamber:"#d4c56a", lowamberBg:"#2e2a17",
-    red:"#ff6b63", redBg:"#3a1815", device:"#5cc5e0", deviceBg:"#122e38", purple:"#b98be6", purpleBg:"#2a1f3d", shadow:"0 2px 8px rgba(0,0,0,.4)"
+    green:"#3ecb7f", greenBg:"#123026", amber:"#f5893e", amberBg:"#3a2414", lowamber:"#e0a878", lowamberBg:"#332015",
+    red:"#ff6b63", redBg:"#3a1815", device:"#e8c84a", deviceBg:"#332d10", purple:"#b98be6", purpleBg:"#2a1f3d", shadow:"0 2px 8px rgba(0,0,0,.4)"
   },
   light: {
     page:"#f5f6f8", card:"#ffffff", card2:"#f8fafc", ink:"#16202b", soft:"#64748b",
     faint:"#94a3b8", line:"#e6eaf0", brand:"#0b5fa5", brandSoft:"#e8f1fa", track:"#eef1f5",
-    green:"#178a54", greenBg:"#e7f5ee", amber:"#b26a00", amberBg:"#fbf0dc", lowamber:"#8a7a2a", lowamberBg:"#f7f3df",
-    red:"#c0362f", redBg:"#fbe6e4", device:"#0e7fa0", deviceBg:"#e2f4fa", purple:"#7c3aed", purpleBg:"#f0e9fb", shadow:"0 1px 3px rgba(0,0,0,.08)"
+    green:"#178a54", greenBg:"#e7f5ee", amber:"#d2691e", amberBg:"#fcecdf", lowamber:"#b5701f", lowamberBg:"#f9ede0",
+    red:"#c0362f", redBg:"#fbe6e4", device:"#a8880c", deviceBg:"#fbf3cf", purple:"#7c3aed", purpleBg:"#f0e9fb", shadow:"0 1px 3px rgba(0,0,0,.08)"
   }
 };
 var theme = "dark";
@@ -715,10 +715,23 @@ geotab.addin.jackMaintenance = function () {
     var scored = devices.map(function (d) {
       return { device:d, health:scoreVehicle(d, odoMap[d.id], faultMap[d.id], oilMap[d.id], sensorMap[d.id]) };
     });
+    // Diagnostic: log the roster + each device's live/dismissed fault tally so we can
+    // verify every expected asset is present and see how its faults are classified.
+    try {
+      console.log("[DynastyJack] Loaded " + scored.length + " assets:");
+      scored.forEach(function (s) {
+        var fs = faultSummary(s.health.faults);
+        console.log("  • " + s.device.name + " — level=" + s.health.level +
+          " | live: " + fs.red + " high-risk, " + fs.amber + " warning, " + fs.deviceCount + " device" +
+          " | dismissed: " + fs.dismissedCount +
+          " | rawFaultRecords: " + ((s.health.faults && s.health.faults.items) ? s.health.faults.items.length : 0));
+      });
+    } catch (e) {}
     var order = { red:0, amber:1, device:2, green:3 };
     scored.sort(function (a,b) {
       if (order[a.health.level]!==order[b.health.level]) return order[a.health.level]-order[b.health.level];
-      return ((b.health.faults&&b.health.faults.total)||0) - ((a.health.faults&&a.health.faults.total)||0);
+      var fa = faultSummary(a.health.faults).distinct, fb = faultSummary(b.health.faults).distinct;
+      return fb - fa;
     });
     var counts = { red:0, amber:0, device:0, green:0 };
     scored.forEach(function (s){ counts[s.health.level]++; });
