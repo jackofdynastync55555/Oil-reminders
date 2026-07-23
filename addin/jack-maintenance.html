@@ -260,6 +260,44 @@ geotab.addin.jackMaintenance = function () {
     });
   }
 
+  // Daily mileage rate per device: compare odometer ~30 days ago vs the current reading.
+  // Used to PREDICT when the next oil change is due (real math on real data — not a guess).
+  function getMileageRates(devices, currentOdoMap) {
+    var past = daysAgo(30);
+    // grab the earliest odometer reading in a small window ~30 days back
+    var winEnd = new Date(Date.now() - 27*86400000).toISOString();
+    var calls = devices.map(function (d) {
+      return ["Get", { typeName:"StatusData", resultsLimit: 50, search:{
+        deviceSearch:{id:d.id}, diagnosticSearch:{id:"DiagnosticOdometerAdjustmentId"},
+        fromDate:past, toDate:winEnd
+      }}];
+    });
+    if (!calls.length) return Promise.resolve({});
+    return multiCall(calls).then(function (rs) {
+      var rates = {};
+      rs.forEach(function (arr, i) {
+        var dev = devices[i], curr = currentOdoMap[dev.id];
+        if (curr == null || !arr || !arr.length) { rates[dev.id] = null; return; }
+        // earliest reading in the window
+        var oldest = null, oldestT = Infinity;
+        arr.forEach(function (sd) {
+          var t = sd.dateTime ? new Date(sd.dateTime).getTime() : Infinity;
+          if (t < oldestT && sd.data != null) { oldestT = t; oldest = sd.data; }
+        });
+        if (oldest == null || !isFinite(oldestT)) { rates[dev.id] = null; return; }
+        var days = (Date.now() - oldestT) / 86400000;
+        var meters = curr - oldest;
+        // need a meaningful span and forward movement to trust the rate
+        if (days < 3 || meters <= 0) { rates[dev.id] = null; return; }
+        rates[dev.id] = (meters / METERS_PER_UNIT) / days; // miles per day
+      });
+      return rates;
+    }).catch(function (e) {
+      console.warn("mileage rate failed:", e && e.message);
+      return {};
+    });
+  }
+
   // Fuel level: query ONLY the fuel diagnostic (DiagnosticFuelLevelId) per device.
   // Because it's a single diagnostic, results can't be truncated by other diagnostics,
   // so the newest reading is reliably the true current value (like Geotab's Measurements page).
@@ -690,6 +728,19 @@ geotab.addin.jackMaintenance = function () {
   }
   function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g,"_"); }
 
+  // Predict a due-date from remaining miles + this vehicle's daily mileage rate.
+  // Returns e.g. "due in ~18 days · Aug 10", or "" if we can't reliably predict.
+  function predictDueText(remainingMiles, rate) {
+    if (rate == null || rate <= 0 || remainingMiles == null) return "";
+    if (remainingMiles <= 0) return ""; // already overdue — handled separately
+    var days = Math.round(remainingMiles / rate);
+    if (!isFinite(days) || days <= 0) return "";
+    if (days > 365) return "due in ~" + Math.round(days/30) + " months"; // far out, keep it coarse
+    var d = new Date(Date.now() + days*86400000);
+    var dateStr = d.toLocaleDateString([], { month:"short", day:"numeric" });
+    return "due in ~" + days + " day" + (days===1?"":"s") + " \u00b7 " + dateStr;
+  }
+
   function assetCard(device, h, sensors) {
     var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:h.level==="device"?C.device:C.green;
     var chips = "";
@@ -776,6 +827,8 @@ geotab.addin.jackMaintenance = function () {
       var oc = h.oil.remaining<=0?C.red:(h.oil.remaining<=h.oil.interval*0.15?C.amber:C.green);
       rows += readRow("Oil change", '<span style="color:'+oc+'; font-weight:600;">' +
         (h.oil.remaining<=0 ? "Overdue by "+fmt(-h.oil.remaining)+" "+UNITS : fmt(h.oil.remaining)+" "+UNITS+" remaining")+'</span>');
+      var pred = predictDueText(h.oil.remaining, cache.rateMap[device.id]);
+      if (pred) rows += readRow("Predicted", '<span style="color:'+C.soft+'; font-weight:500;">'+esc(pred)+'</span>');
     }
     var sensorBlock = rows
       ? '<div style="margin-top:10px;"><div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:2px;">Readings</div>'+rows+'</div>'
@@ -794,10 +847,11 @@ geotab.addin.jackMaintenance = function () {
         var name = diagNameCache[it.diagId] || it.code || "Unknown fault";
         var isDev = it.isDevice || isDeviceFault(name, it.code);
         var key = name + "|" + it.severity;
-        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, isDevice:isDev, count:0, latest:null };
+        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, isDevice:isDev, count:0, latest:null, earliest:null };
         groups[key].count++;
         var t = it.first ? new Date(it.first).getTime() : 0;
         if (t && (!groups[key].latest || t > groups[key].latest)) groups[key].latest = t;
+        if (t && (!groups[key].earliest || t < groups[key].earliest)) groups[key].earliest = t;
         if (t > overallLatest) overallLatest = t;
       });
       var arr = Object.keys(groups).map(function (k){ return groups[k]; });
@@ -837,6 +891,16 @@ geotab.addin.jackMaintenance = function () {
           ? "Telematics/device fault — verify harness seating; report to reseller if it persists."
           : (g.risk==="ignore" ? meta.advise : recommendedAction(g.name, g.severity));
         var recentTag = isMostRecent ? '<span style="font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; background:'+C.brand+'22; color:'+C.brand+'; margin-left:6px;">most recent</span>' : '';
+        // Honest persistence signal for serious vehicle faults: how long it's been ACTIVE
+        // (observed from the data) — NOT a fabricated time-to-failure prediction.
+        var persistLine = "";
+        if (!asDevice && (g.risk==="critical" || g.risk==="high") && g.earliest) {
+          var daysActive = Math.max(1, Math.round((Date.now() - g.earliest) / 86400000));
+          var persistMsg = daysActive >= 2
+            ? "Active for " + daysActive + " days" + (g.count>1 ? " and still recurring — not clearing on its own." : " — persistent.")
+            : "First seen today.";
+          persistLine = '<div style="margin-left:21px; margin-top:4px; font-size:11.5px; color:'+c+'; font-weight:600;">\u23F1 ' + persistMsg + '</div>';
+        }
         return '<div style="padding:11px 0; border-top:1px solid '+C.line+';'+(muted?' opacity:0.82;':'')+(isMostRecent?' background:'+C.brand+'0d; border-left:3px solid '+C.brand+'; padding-left:10px; margin-left:-13px;':'')+'">' +
           '<div style="display:flex; align-items:center; gap:10px;">' +
             dot(c) +
@@ -844,6 +908,7 @@ geotab.addin.jackMaintenance = function () {
             '<div style="font-size:11.5px; color:'+C.soft+';">'+esc(g.code)+(when?" · latest "+when:"")+(g.count>1?" · "+g.count+" occurrences":"")+'</div></div>' +
             pill(badgeLabel, bg, c) +
           '</div>' +
+          persistLine +
           '<div style="margin-left:21px; margin-top:5px; font-size:12px; color:'+C.soft+'; border-left:2px solid '+c+'; padding-left:9px;">' +
             '<span style="color:'+c+'; font-weight:600;">'+(asDevice||g.risk==="ignore"?"Suggested: ":"Recommended: ")+'</span>'+esc(action) +
           '</div>' +
@@ -1036,6 +1101,7 @@ geotab.addin.jackMaintenance = function () {
       }
       var device=it.device, det=it.det, rec=it.rec, odoMeters=it.odoMeters, interval=it.interval, since=it.since, pct=it.pct, remaining=it.remaining;
       var pillHtml, fill;
+      var predTxt = predictDueText(remaining, cache.rateMap[device.id]);
       if (it.status==="off"){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
       else if (it.status==="due"){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
       else if (it.status==="soon"){ pillHtml=pill("Due soon \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.amberBg,C.amber); fill=C.amber; }
@@ -1082,7 +1148,9 @@ geotab.addin.jackMaintenance = function () {
         '<div><div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;">' +
           '<div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
           '<div style="display:flex; justify-content:space-between; margin-top:7px; font-size:12px; color:'+C.soft+';">' +
-            '<span>'+fmt(Math.max(0,since))+' / '+fmt(interval)+' '+UNITS+'</span>'+pillHtml+'</div></div>' +
+            '<span>'+fmt(Math.max(0,since))+' / '+fmt(interval)+' '+UNITS+'</span>'+pillHtml+'</div>' +
+            (predTxt && it.status!=="due" && it.status!=="off" ? '<div style="margin-top:6px; font-size:11.5px; color:'+C.soft+'; opacity:0.85;">\uD83D\uDCC5 Predicted: '+esc(predTxt)+' (based on recent daily mileage)</div>' : '') +
+          '</div>' +
         '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid '+C.line+';">' +
           '<span style="font-size:13px; color:'+C.soft+';">Interval <input type="number" min="500" step="500" value="'+interval+'" style="width:92px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> '+UNITS+'</span>' +
           '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" '+(det.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> Reminders on</label>' +
@@ -1485,7 +1553,7 @@ geotab.addin.jackMaintenance = function () {
   }
 
   // ---- orchestration -------------------------------------------------
-  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{}, sensorMap:{}, customList:[], allDevices:[] };
+  var cache = { devices:[], odoMap:{}, faultMap:{}, oilMap:{}, sensorMap:{}, customList:[], allDevices:[], rateMap:{} };
   function safe(p, fallback) { return Promise.resolve().then(function(){ return p; }).then(function (v){ return v; }).catch(function (e){ console.warn("call failed:", e&&e.message); return fallback; }); }
 
   function renderAll() {
@@ -1513,7 +1581,12 @@ geotab.addin.jackMaintenance = function () {
         if (!cache.sensorMap[id]) cache.sensorMap[id] = {};
         cache.sensorMap[id].fuel = fuelMap[id];
       });
-      return safe(resolveDiagnostics(cache.faultMap), undefined);
+      return safe(resolveDiagnostics(cache.faultMap), undefined).then(function () {
+        // predictive mileage rates need the current odometer map
+        return safe(getMileageRates(cache.allDevices, cache.odoMap), {});
+      }).then(function (rates) {
+        cache.rateMap = rates || {};
+      });
     }).then(function () {
       renderAll();
       var lu = document.getElementById("lastUpdated");
