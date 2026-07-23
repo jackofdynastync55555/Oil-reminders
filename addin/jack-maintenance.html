@@ -13,7 +13,12 @@
       <div id="appSub" style="margin-top:4px; font-size:13px;">Fleet-wide maintenance visibility — faults, service, and device health in one place.</div>
       <div id="lastUpdated" style="margin-top:3px; font-size:11.5px; opacity:0.7;"></div>
     </div>
-    <div style="display:flex; gap:8px; align-items:center;">
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <select id="rangeSelect" style="border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer;" title="Fault lookback window">
+        <option value="1">Last 24 hours</option>
+        <option value="7" selected>Last 7 days</option>
+        <option value="30">Last month</option>
+      </select>
       <select id="groupSelect" style="border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; max-width:220px;"></select>
       <button id="themeBtn" style="border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer;">Light</button>
       <button id="refreshBtn" style="border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Refresh</button>
@@ -40,21 +45,21 @@ var CUSTOM_ADD_IN_ID = "ajE5ODViNGYtOTJmZC0wODk"; // separate store for custom r
 var DEFAULT_INTERVAL_MILES = 10000;
 var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
-var FAULT_LOOKBACK_DAYS = 7;
+var FAULT_LOOKBACK_DAYS = 7; // controlled by the range selector (24h / 7d / 30d)
 
 // ---- Theme palettes --------------------------------------------------
 var THEMES = {
   dark: {
     page:"#0f1620", card:"#18212e", card2:"#1e2836", ink:"#e8eef5", soft:"#94a3b8",
     faint:"#64748b", line:"#2a3646", brand:"#3b9dff", brandSoft:"#12283f", track:"#243040",
-    green:"#3ecb7f", greenBg:"#123026", amber:"#f0b24a", amberBg:"#33280f",
-    red:"#ff6b63", redBg:"#3a1815", device:"#5cc5e0", deviceBg:"#122e38", shadow:"0 2px 8px rgba(0,0,0,.4)"
+    green:"#3ecb7f", greenBg:"#123026", amber:"#f0b24a", amberBg:"#33280f", lowamber:"#d4c56a", lowamberBg:"#2e2a17",
+    red:"#ff6b63", redBg:"#3a1815", device:"#5cc5e0", deviceBg:"#122e38", purple:"#b98be6", purpleBg:"#2a1f3d", shadow:"0 2px 8px rgba(0,0,0,.4)"
   },
   light: {
     page:"#f5f6f8", card:"#ffffff", card2:"#f8fafc", ink:"#16202b", soft:"#64748b",
     faint:"#94a3b8", line:"#e6eaf0", brand:"#0b5fa5", brandSoft:"#e8f1fa", track:"#eef1f5",
-    green:"#178a54", greenBg:"#e7f5ee", amber:"#b26a00", amberBg:"#fbf0dc",
-    red:"#c0362f", redBg:"#fbe6e4", device:"#0e7fa0", deviceBg:"#e2f4fa", shadow:"0 1px 3px rgba(0,0,0,.08)"
+    green:"#178a54", greenBg:"#e7f5ee", amber:"#b26a00", amberBg:"#fbf0dc", lowamber:"#8a7a2a", lowamberBg:"#f7f3df",
+    red:"#c0362f", redBg:"#fbe6e4", device:"#0e7fa0", deviceBg:"#e2f4fa", purple:"#7c3aed", purpleBg:"#f0e9fb", shadow:"0 1px 3px rgba(0,0,0,.08)"
   }
 };
 var theme = "dark";
@@ -589,14 +594,19 @@ geotab.addin.jackMaintenance = function () {
       else if (t==="device" && level==="green") level="device";
     }
     if (faults && faults.total>0) {
-      // Vehicle (mechanical) faults drive the real status
-      var vRed = 0, vAmber = 0;
+      // Rate each vehicle (non-device) fault by risk tier and let the WORST drive status.
+      // critical/high risk -> red (Need service); medium -> amber (Watch); low/ignore -> no escalation.
+      var tierCounts = { critical:0, high:0, medium:0, low:0, ignore:0 };
       (faults.items||[]).forEach(function (it){
         if (it.isDevice) return;
-        if (it.severity==="critical") vRed++; else vAmber++;
+        var name = diagNameCache[it.diagId] || it.code || "";
+        var r = riskRating({ name:name, code:it.code, severity:it.severity, isDevice:false });
+        tierCounts[r] = (tierCounts[r]||0) + 1;
       });
-      if (vRed>0){ bump("red"); reasons.push(vRed+" critical fault"+(vRed>1?"s":"")); }
-      if (vAmber>0){ bump("amber"); reasons.push(vAmber+" fault"+(vAmber>1?"s":"")); }
+      var seriousCount = tierCounts.critical + tierCounts.high;
+      if (seriousCount>0){ bump("red"); reasons.push(seriousCount+" high-risk fault"+(seriousCount>1?"s":"")); }
+      if (tierCounts.medium>0){ bump("amber"); reasons.push(tierCounts.medium+" fault"+(tierCounts.medium>1?"s":"")); }
+      if (tierCounts.low>0){ bump("amber"); reasons.push(tierCounts.low+" minor"); }
       // Device/telematics faults are informational — their own "device" level, below amber
       var devCount = faults.deviceCount || 0;
       if (devCount>0){ bump("device"); reasons.push(devCount+" device issue"+(devCount>1?"s":"")); }
@@ -767,7 +777,7 @@ geotab.addin.jackMaintenance = function () {
     // "Sitting" tag if the asset hasn't reported in over 7 days
     if (sensors && sensors.sitting) {
       var daysAgoTxt = sensors.lastSeen ? Math.floor((Date.now()-sensors.lastSeen)/86400000)+"d" : "7d+";
-      chips += pill("sitting "+daysAgoTxt, C.track, C.amber)+" ";
+      chips += pill("sitting "+daysAgoTxt, C.purpleBg, C.purple)+" ";
     }
     if (h.odoMeters==null) chips += pill("no data", C.track, C.faint)+" ";
     if (!chips) chips = pill("healthy", C.greenBg, C.green);
@@ -878,6 +888,8 @@ geotab.addin.jackMaintenance = function () {
         var c, bg, badgeLabel;
         if (asDevice) {
           c = C.device; bg = C.deviceBg; badgeLabel = "device";
+        } else if (g.risk==="low") {
+          c = C.lowamber; bg = C.lowamberBg; badgeLabel = meta.label;
         } else {
           c = meta.color==="red"?C.red:(meta.color==="amber"?C.amber:C.faint);
           bg = meta.color==="red"?C.redBg:(meta.color==="amber"?C.amberBg:C.track);
@@ -1529,6 +1541,8 @@ geotab.addin.jackMaintenance = function () {
     if (rb) { rb.style.background = C.card; rb.style.border = "1px solid "+C.line; rb.style.color = C.brand; }
     var gs = $("groupSelect");
     if (gs) { gs.style.background = C.card; gs.style.border = "1px solid "+C.line; gs.style.color = C.ink; }
+    var rs = $("rangeSelect");
+    if (rs) { rs.style.background = C.card; rs.style.border = "1px solid "+C.line; rs.style.color = C.ink; }
     var tabsWrap = $("tabs");
     if (tabsWrap) tabsWrap.style.borderBottom = "1px solid "+C.line;
     styleTabs();
@@ -1615,6 +1629,11 @@ geotab.addin.jackMaintenance = function () {
         if (groupSelectEl) groupSelectEl.addEventListener("change", function () {
           selectedGroupId = groupSelectEl.value || null;
           renderAll();
+        });
+        var rangeSel = $("rangeSelect");
+        if (rangeSel) rangeSel.addEventListener("change", function () {
+          FAULT_LOOKBACK_DAYS = Number(rangeSel.value) || 7;
+          reloadAll(); // re-pull faults for the new window
         });
         document.querySelectorAll("#tabs button").forEach(function (b) {
           b.addEventListener("click", function () { switchTab(b.getAttribute("data-tab")); });
