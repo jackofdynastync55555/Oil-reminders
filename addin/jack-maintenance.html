@@ -265,16 +265,17 @@ geotab.addin.jackMaintenance = function () {
     });
   }
 
-  // Daily mileage rate per device: compare odometer ~30 days ago vs the current reading.
-  // Used to PREDICT when the next oil change is due (real math on real data — not a guess).
+  // Daily mileage rate per device, computed from a FULL MONTH of odometer readings
+  // using a least-squares linear fit (miles/day) rather than just two endpoints.
+  // This reflects the vehicle's actual recent driving pattern, so the oil-change
+  // prediction is robust to a truck that sat for a stretch then drove hard, etc.
   function getMileageRates(devices, currentOdoMap) {
-    var past = daysAgo(30);
-    // grab the earliest odometer reading in a small window ~30 days back
-    var winEnd = new Date(Date.now() - 27*86400000).toISOString();
+    var from = daysAgo(30), to = new Date().toISOString();
     var calls = devices.map(function (d) {
-      return ["Get", { typeName:"StatusData", resultsLimit: 50, search:{
+      // pull many points across the month; odometer logs are sparse so this is cheap
+      return ["Get", { typeName:"StatusData", resultsLimit: 500, search:{
         deviceSearch:{id:d.id}, diagnosticSearch:{id:"DiagnosticOdometerAdjustmentId"},
-        fromDate:past, toDate:winEnd
+        fromDate:from, toDate:to
       }}];
     });
     if (!calls.length) return Promise.resolve({});
@@ -282,19 +283,33 @@ geotab.addin.jackMaintenance = function () {
       var rates = {};
       rs.forEach(function (arr, i) {
         var dev = devices[i], curr = currentOdoMap[dev.id];
-        if (curr == null || !arr || !arr.length) { rates[dev.id] = null; return; }
-        // earliest reading in the window
-        var oldest = null, oldestT = Infinity;
+        rates[dev.id] = null;
+        if (!arr || arr.length < 2) return;
+        // collect (timeDays, miles) points, oldest→newest, de-duplicated by timestamp
+        var pts = [];
         arr.forEach(function (sd) {
-          var t = sd.dateTime ? new Date(sd.dateTime).getTime() : Infinity;
-          if (t < oldestT && sd.data != null) { oldestT = t; oldest = sd.data; }
+          if (sd.data == null || !sd.dateTime) return;
+          pts.push({ t: new Date(sd.dateTime).getTime(), mi: sd.data / METERS_PER_UNIT });
         });
-        if (oldest == null || !isFinite(oldestT)) { rates[dev.id] = null; return; }
-        var days = (Date.now() - oldestT) / 86400000;
-        var meters = curr - oldest;
-        // need a meaningful span and forward movement to trust the rate
-        if (days < 3 || meters <= 0) { rates[dev.id] = null; return; }
-        rates[dev.id] = (meters / METERS_PER_UNIT) / days; // miles per day
+        if (curr != null) pts.push({ t: Date.now(), mi: curr / METERS_PER_UNIT }); // anchor with current reading
+        if (pts.length < 2) return;
+        pts.sort(function (a,b){ return a.t - b.t; });
+        var t0 = pts[0].t;
+        var spanDays = (pts[pts.length-1].t - t0) / 86400000;
+        var odoGain = pts[pts.length-1].mi - pts[0].mi;
+        // need a real span and forward movement to trust it
+        if (spanDays < 3 || odoGain <= 0) return;
+        // least-squares slope of miles vs. days
+        var n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+        pts.forEach(function (p) {
+          var x = (p.t - t0) / 86400000, y = p.mi;
+          sx += x; sy += y; sxx += x*x; sxy += x*y;
+        });
+        var denom = (n*sxx - sx*sx);
+        var slope = denom !== 0 ? (n*sxy - sx*sy) / denom : (odoGain / spanDays);
+        // guard against nonsense; fall back to simple endpoint average if slope is off
+        if (!isFinite(slope) || slope <= 0) slope = odoGain / spanDays;
+        rates[dev.id] = slope; // miles per day
       });
       return rates;
     }).catch(function (e) {
@@ -455,26 +470,52 @@ geotab.addin.jackMaintenance = function () {
   }
   // Faults with per-fault detail retained, grouped per device.
   // Capped result count + timeout so a heavy history can't hang the dashboard.
+  // Summarize a device's faults into DISTINCT counts (deduped by name+severity),
+  // counting only LIVE faults (active, not dismissed/cleared) — matching MyGeotab's view.
+  // Dismissed/cleared faults are tallied separately so they can be shown but not inflate counts.
+  function faultSummary(fi) {
+    var s = { distinct:0, red:0, amber:0, deviceCount:0, vehicleCount:0, dismissedCount:0, total:0 };
+    if (!fi || !fi.items || !fi.items.length) return s;
+    var seenLive = {}, seenDismissed = {};
+    fi.items.forEach(function (it) {
+      var name = diagNameCache[it.diagId] || it.code || "fault";
+      var key = name + "|" + it.severity;
+      if (it.live) {
+        if (seenLive[key]) return; // dedupe occurrences → distinct faults
+        seenLive[key] = true;
+        s.distinct++; s.total++;
+        if (it.isDevice) s.deviceCount++; else s.vehicleCount++;
+        if (it.severity === "critical") s.red++; else s.amber++;
+      } else {
+        if (seenDismissed[key]) return;
+        seenDismissed[key] = true;
+        s.dismissedCount++;
+      }
+    });
+    return s;
+  }
+
   function getFaults(devices) {
     var call = apiCall("Get", { typeName:"FaultData", resultsLimit: 5000, search:{ fromDate:daysAgo(FAULT_LOOKBACK_DAYS), toDate:new Date().toISOString() } })
       .then(function (faults) {
-        var active = faults.filter(function (f) {
-          var a = f.faultState ? (f.faultState==="Active"||f.faultState==="PendingAndActive") : true;
-          return a && !f.dismissDateTime;
-        });
         var by = {};
-        active.forEach(function (f) {
+        faults.forEach(function (f) {
           var did = f.device && f.device.id; if (!did) return;
-          if (!by[did]) by[did] = { total:0, red:0, amber:0, deviceCount:0, vehicleCount:0, items:[] };
+          if (!by[did]) by[did] = { items:[] };
           var sev = (f.severity || "").toLowerCase();
           var isRed = sev.indexOf("crit")>=0 || sev.indexOf("severe")>=0 || sev.indexOf("high")>=0;
           var code = (f.diagnostic && (f.diagnostic.code || f.diagnostic.id)) || "fault";
           var diagId = f.diagnostic && f.diagnostic.id ? f.diagnostic.id : null;
           var faultStr = ((diagId||"") + " " + code).toLowerCase();
           var isDevice = /telematics|devicetype|invaliddevice|iox|harness|godevice|watchdog|firmware|tamper/.test(faultStr);
-          by[did].total++;
-          if (isDevice) by[did].deviceCount++; else by[did].vehicleCount++;
-          if (isRed) by[did].red++; else by[did].amber++;
+          // Match MyGeotab's active view. Treat a fault as LIVE unless it's explicitly
+          // dismissed or in a cleared/inactive state — a denylist, so we never hide a
+          // genuinely active fault just because its state string is unfamiliar.
+          var st = (f.faultState || "").toString();
+          var stLow = st.toLowerCase();
+          var dismissed = !!f.dismissDateTime;
+          var cleared = stLow.indexOf("clear") >= 0 || stLow.indexOf("inactive") >= 0 || stLow.indexOf("resolved") >= 0;
+          var live = !dismissed && !cleared; // active/pending/unknown-state all count as live
           by[did].items.push({
             diagId: diagId,
             code: code,
@@ -482,7 +523,9 @@ geotab.addin.jackMaintenance = function () {
             severity: isRed ? "critical" : "warning",
             isDevice: isDevice,
             first: f.dateTime || f.activeFrom || null,
-            state: f.faultState || "Active"
+            state: st,
+            live: live,
+            dismissed: dismissed || cleared
           });
         });
         return by;
@@ -593,13 +636,17 @@ geotab.addin.jackMaintenance = function () {
       else if (t==="amber" && level!=="red") level="amber";
       else if (t==="device" && level==="green") level="device";
     }
-    if (faults && faults.total>0) {
-      // Rate each vehicle (non-device) fault by risk tier and let the WORST drive status.
-      // critical/high risk -> red (Need service); medium -> amber (Watch); low/ignore -> no escalation.
+    if (faults && faults.items && faults.items.length) {
+      // Rate each DISTINCT live vehicle fault by risk tier; the WORST tier drives status.
+      // critical/high risk -> red (Need service); medium -> amber; low/ignore -> no escalation.
       var tierCounts = { critical:0, high:0, medium:0, low:0, ignore:0 };
+      var seenTier = {};
       (faults.items||[]).forEach(function (it){
-        if (it.isDevice) return;
+        if (it.isDevice || !it.live) return;
         var name = diagNameCache[it.diagId] || it.code || "";
+        var key = name + "|" + it.severity;
+        if (seenTier[key]) return; // distinct faults only
+        seenTier[key] = true;
         var r = riskRating({ name:name, code:it.code, severity:it.severity, isDevice:false });
         tierCounts[r] = (tierCounts[r]||0) + 1;
       });
@@ -607,8 +654,14 @@ geotab.addin.jackMaintenance = function () {
       if (seriousCount>0){ bump("red"); reasons.push(seriousCount+" high-risk fault"+(seriousCount>1?"s":"")); }
       if (tierCounts.medium>0){ bump("amber"); reasons.push(tierCounts.medium+" fault"+(tierCounts.medium>1?"s":"")); }
       if (tierCounts.low>0){ bump("amber"); reasons.push(tierCounts.low+" minor"); }
-      // Device/telematics faults are informational — their own "device" level, below amber
-      var devCount = faults.deviceCount || 0;
+      // Device/telematics faults (distinct, live) are informational — their own level, below amber
+      var devSeen = {}, devCount = 0;
+      (faults.items||[]).forEach(function (it){
+        if (!it.isDevice || !it.live) return;
+        var name = diagNameCache[it.diagId] || it.code || "";
+        var key = name + "|" + it.severity;
+        if (devSeen[key]) return; devSeen[key]=true; devCount++;
+      });
       if (devCount>0){ bump("device"); reasons.push(devCount+" device issue"+(devCount>1?"s":"")); }
     }
     var oilInfo = null;
@@ -754,16 +807,12 @@ geotab.addin.jackMaintenance = function () {
   function assetCard(device, h, sensors) {
     var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:h.level==="device"?C.device:C.green;
     var chips = "";
-    if (h.faults && h.faults.total>0) {
-      // separate vehicle faults from device/telematics faults
-      var vRed=0, vAmber=0, devCount=0;
-      (h.faults.items||[]).forEach(function (it){
-        if (it.isDevice) { devCount++; return; }
-        if (it.severity==="critical") vRed++; else vAmber++;
-      });
-      if (vRed>0) chips += pill(vRed+" critical", C.redBg, C.red)+" ";
-      if (vAmber>0) chips += pill(vAmber+" warning", C.amberBg, C.amber)+" ";
-      if (devCount>0) chips += pill(devCount+" device issue"+(devCount>1?"s":""), C.deviceBg, C.device)+" ";
+    if (h.faults && h.faults.items && h.faults.items.length) {
+      var fs = faultSummary(h.faults); // distinct, live-only counts
+      if (fs.red>0) chips += pill(fs.red+" high-risk", C.redBg, C.red)+" ";
+      if (fs.amber>0) chips += pill(fs.amber+" warning", C.amberBg, C.amber)+" ";
+      if (fs.deviceCount>0) chips += pill(fs.deviceCount+" device issue"+(fs.deviceCount>1?"s":""), C.deviceBg, C.device)+" ";
+      if (fs.dismissedCount>0) chips += pill(fs.dismissedCount+" dismissed", C.track, C.faint)+" ";
     }
     if (h.oil && h.oil.enabled) {
       if (h.oil.remaining<=0) chips += pill("oil overdue", C.redBg, C.red)+" ";
@@ -857,14 +906,19 @@ geotab.addin.jackMaintenance = function () {
         var name = diagNameCache[it.diagId] || it.code || "Unknown fault";
         var isDev = it.isDevice || isDeviceFault(name, it.code);
         var key = name + "|" + it.severity;
-        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, isDevice:isDev, count:0, latest:null, earliest:null };
+        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, isDevice:isDev, count:0, latest:null, earliest:null, live:false, dismissed:false };
         groups[key].count++;
+        if (it.live) groups[key].live = true;        // any live occurrence → group is live
+        if (it.dismissed) groups[key].dismissed = true;
         var t = it.first ? new Date(it.first).getTime() : 0;
         if (t && (!groups[key].latest || t > groups[key].latest)) groups[key].latest = t;
         if (t && (!groups[key].earliest || t < groups[key].earliest)) groups[key].earliest = t;
         if (t > overallLatest) overallLatest = t;
       });
       var arr = Object.keys(groups).map(function (k){ return groups[k]; });
+      // dismissed/cleared faults that are NOT also live get separated out
+      var dismissedFaults = arr.filter(function (g){ return !g.live && g.dismissed; });
+      arr = arr.filter(function (g){ return g.live; }); // main sections show live faults only
       // assign risk tier to each
       arr.forEach(function (g){ g.risk = riskRating(g); });
 
@@ -930,14 +984,27 @@ geotab.addin.jackMaintenance = function () {
       if (vehicleFaults.length) {
         faultList += vehicleFaults.map(function (g){ return renderFault(g, false); }).join("");
       } else {
-        faultList += '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No vehicle fault codes.</div>';
+        faultList += '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No active vehicle fault codes.</div>';
       }
       if (deviceFaults.length) {
         faultList += '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.device+'; margin:16px 0 2px; padding-top:12px; border-top:1px dashed '+C.line+';">Device / telematics \u00b7 minor</div>';
         faultList += deviceFaults.map(function (g){ return renderFault(g, true); }).join("");
       }
+      if (dismissedFaults.length) {
+        dismissedFaults.sort(function (a,b){ return (b.latest||0) - (a.latest||0); });
+        faultList += '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.faint+'; margin:16px 0 2px; padding-top:12px; border-top:1px dashed '+C.line+';">Dismissed / cleared \u00b7 not counted</div>';
+        faultList += dismissedFaults.map(function (g) {
+          var when = g.latest ? new Date(g.latest).toLocaleDateString() : "";
+          return '<div style="padding:8px 0; border-top:1px solid '+C.line+'; opacity:0.6;">' +
+            '<div style="display:flex; align-items:center; gap:10px;">' + dot(C.faint) +
+              '<div style="flex:1;"><div style="font-size:12.5px; color:'+C.soft+'; text-decoration:line-through;">'+esc(g.name)+'</div>' +
+              '<div style="font-size:11px; color:'+C.faint+';">'+esc(g.code)+(when?" · last "+when:"")+'</div></div>' +
+              pill("dismissed", C.track, C.faint) +
+            '</div></div>';
+        }).join("");
+      }
     } else {
-      faultList = '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No faults in the last 7 days.</div>';
+      faultList = '<div style="font-size:13px; color:'+C.green+'; padding:10px 0; font-weight:600;">No faults in the selected window.</div>';
     }
 
     return '<div style="padding:4px 16px 16px; background:'+C.card2+'; border-top:1px solid '+C.line+';">' +
@@ -1172,7 +1239,7 @@ geotab.addin.jackMaintenance = function () {
           '<div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
           '<div style="display:flex; justify-content:space-between; margin-top:7px; font-size:12px; color:'+C.soft+';">' +
             '<span>'+fmt(Math.max(0,since))+' / '+fmt(interval)+' '+UNITS+'</span>'+pillHtml+'</div>' +
-            (predTxt && it.status!=="due" && it.status!=="off" ? '<div style="margin-top:6px; font-size:11.5px; color:'+C.soft+'; opacity:0.85;">\uD83D\uDCC5 Predicted: '+esc(predTxt)+' (based on recent daily mileage)</div>' : '') +
+            (predTxt && it.status!=="due" && it.status!=="off" ? '<div style="margin-top:6px; font-size:11.5px; color:'+C.soft+'; opacity:0.85;">\uD83D\uDCC5 Predicted: '+esc(predTxt)+' (based on last 30 days of mileage)</div>' : '') +
           '</div>' +
         '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid '+C.line+';">' +
           '<span style="font-size:13px; color:'+C.soft+';">Interval <input type="number" min="500" step="500" value="'+interval+'" style="width:92px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> '+UNITS+'</span>' +
