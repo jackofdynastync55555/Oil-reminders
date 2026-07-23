@@ -42,7 +42,7 @@
 
 var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
 var CUSTOM_ADD_IN_ID = "ajE5ODViNGYtOTJmZC0wODk"; // separate store for custom reminders
-var DEFAULT_INTERVAL_MILES = 10000;
+var DEFAULT_INTERVAL_MILES = 5000;
 var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
 var FAULT_LOOKBACK_DAYS = 7; // controlled by the range selector (24h / 7d / 30d)
@@ -1074,6 +1074,17 @@ geotab.addin.jackMaintenance = function () {
         '<button id="clearOilFilter" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:6px; padding:3px 10px; font-size:12px; cursor:pointer;">Clear filter</button></div>';
     }
 
+    // Bulk "set interval for all" bar
+    var scopeNote = (oilFilter && oilFilter!=="all") ? "the filtered vehicles" : "all tracked vehicles";
+    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:18px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
+      '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Set interval for all</span>' +
+      '<input id="oil-bulk-interval" type="number" min="500" step="500" value="'+DEFAULT_INTERVAL_MILES+'" style="width:110px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
+      '<span style="font-size:13px; color:'+C.soft+';">'+UNITS+'</span>' +
+      '<button id="oil-bulk-apply" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
+      '<span style="flex:1;"></span>' +
+      '<span style="font-size:11.5px; color:'+C.faint+';">Applies to '+scopeNote+' shown below</span>' +
+    '</div>';
+
     oilEl.innerHTML = summary;
     if (counts.total===0) { oilEl.innerHTML += '<div style="text-align:center; color:'+C.soft+'; padding:40px 20px;">No vehicles with odometer data yet.</div>'; return; }
 
@@ -1201,6 +1212,24 @@ geotab.addin.jackMaintenance = function () {
     });
     var cof = document.getElementById("clearOilFilter");
     if (cof) cof.addEventListener("click", function () { oilFilter=null; renderOil(devices, odoMap, oilMap, sensorMap); });
+
+    // wire bulk "set interval for all" — applies to the currently visible vehicles
+    var bulkApply = document.getElementById("oil-bulk-apply");
+    if (bulkApply) bulkApply.addEventListener("click", function () {
+      var val = Number(document.getElementById("oil-bulk-interval").value) || 0;
+      if (val < 500) { toast("Enter an interval of at least 500 "+UNITS); return; }
+      var targets = visible; // respects any active filter
+      if (!targets.length) { toast("No vehicles to update"); return; }
+      if (!window.confirm("Set the oil change interval to "+fmt(val)+" "+UNITS+" for "+targets.length+" vehicle"+(targets.length===1?"":"s")+"?")) return;
+      Promise.all(targets.map(function (it) {
+        var det = it.rec ? it.rec.details : { deviceId:it.device.id, deviceName:it.device.name, lastNotifiedMeters:it.odoMeters, enabled:true, lastNotifiedDate:null, history:[] };
+        det.intervalMiles = val; det.deviceName = it.device.name;
+        return persistOil(it.rec, det, it.device, oilMap);
+      })).then(function () {
+        toast("Interval set to "+fmt(val)+" "+UNITS+" for "+targets.length+" vehicle"+(targets.length===1?"":"s"));
+        reloadAll();
+      });
+    });
 
     // wire service-history collapse toggles
     oilEl.querySelectorAll('[data-histtoggle]').forEach(function (el) {
