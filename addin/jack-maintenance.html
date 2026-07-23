@@ -476,6 +476,11 @@ geotab.addin.jackMaintenance = function () {
   function faultSummary(fi) {
     var s = { distinct:0, red:0, amber:0, deviceCount:0, vehicleCount:0, dismissedCount:0, total:0 };
     if (!fi || !fi.items || !fi.items.length) return s;
+    function isDev(it) {
+      if (it.isDevice) return true;
+      var nm = (diagNameCache[it.diagId] || it.code || "").toLowerCase();
+      return /telematics|device type|invalid device|iox|harness|go device|gps|antenna|watchdog|firmware|tamper|unplug|reader|add-on|internal reset|listen only|can bus/.test(nm);
+    }
     var seenLive = {}, seenDismissed = {};
     fi.items.forEach(function (it) {
       var name = diagNameCache[it.diagId] || it.code || "fault";
@@ -484,8 +489,8 @@ geotab.addin.jackMaintenance = function () {
         if (seenLive[key]) return; // dedupe occurrences → distinct faults
         seenLive[key] = true;
         s.distinct++; s.total++;
-        if (it.isDevice) s.deviceCount++; else s.vehicleCount++;
-        if (it.severity === "critical") s.red++; else s.amber++;
+        if (isDev(it)) { s.deviceCount++; }
+        else { s.vehicleCount++; if (it.severity === "critical") s.red++; else s.amber++; }
       } else {
         if (seenDismissed[key]) return;
         seenDismissed[key] = true;
@@ -639,10 +644,17 @@ geotab.addin.jackMaintenance = function () {
     if (faults && faults.items && faults.items.length) {
       // Rate each DISTINCT live vehicle fault by risk tier; the WORST tier drives status.
       // critical/high risk -> red (Need service); medium -> amber; low/ignore -> no escalation.
+      // Re-evaluate device status using the RESOLVED name (the early it.isDevice flag was
+      // set before names resolved, so name-only device faults were missed) — matches the list.
+      function isDeviceResolved(it) {
+        if (it.isDevice) return true;
+        var nm = (diagNameCache[it.diagId] || it.code || "").toLowerCase();
+        return /telematics|device type|invalid device|iox|harness|go device|gps|antenna|watchdog|firmware|tamper|unplug|reader|add-on|internal reset|listen only|can bus/.test(nm);
+      }
       var tierCounts = { critical:0, high:0, medium:0, low:0, ignore:0 };
       var seenTier = {};
       (faults.items||[]).forEach(function (it){
-        if (it.isDevice || !it.live) return;
+        if (isDeviceResolved(it) || !it.live) return;
         var name = diagNameCache[it.diagId] || it.code || "";
         var key = name + "|" + it.severity;
         if (seenTier[key]) return; // distinct faults only
@@ -657,7 +669,7 @@ geotab.addin.jackMaintenance = function () {
       // Device/telematics faults (distinct, live) are informational — their own level, below amber
       var devSeen = {}, devCount = 0;
       (faults.items||[]).forEach(function (it){
-        if (!it.isDevice || !it.live) return;
+        if (!isDeviceResolved(it) || !it.live) return;
         var name = diagNameCache[it.diagId] || it.code || "";
         var key = name + "|" + it.severity;
         if (devSeen[key]) return; devSeen[key]=true; devCount++;
