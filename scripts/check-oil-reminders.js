@@ -28,7 +28,7 @@ const CUSTOM_ADD_IN_ID = "ajE5ODViNGYtOTJmZC0wODk"; // custom reminders store
 const UNITS = "mi"; // "mi" or "km" — match the Add-In HTML
 const METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
 
-const DEFAULT_INTERVAL_MILES = 10000;
+const DEFAULT_INTERVAL_MILES = 5000;
 const DEFAULT_TARGET_GROUP_ID = "GroupCompanyId"; // whole fleet
 const MAX_DATABASES = 20; // scans DB1..DB20
 
