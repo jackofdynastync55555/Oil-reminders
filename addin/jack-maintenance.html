@@ -504,28 +504,32 @@ geotab.addin.jackMaintenance = function () {
     var call = apiCall("Get", { typeName:"FaultData", resultsLimit: 5000, search:{ fromDate:daysAgo(FAULT_LOOKBACK_DAYS), toDate:new Date().toISOString() } })
       .then(function (faults) {
         var by = {};
+        var rawSevSeen = {}; // for diagnostic logging
         faults.forEach(function (f) {
           var did = f.device && f.device.id; if (!did) return;
           if (!by[did]) by[did] = { items:[] };
-          var sev = (f.severity || "").toLowerCase();
-          var isRed = sev.indexOf("crit")>=0 || sev.indexOf("severe")>=0 || sev.indexOf("high")>=0;
+          // Capture Geotab's own severity verbatim. FaultData.severity is typically an enum
+          // (e.g. "Critical", "Warning", "None"). Some databases also expose an enriched
+          // severity. We keep the raw string so riskRating can trust it over keyword guessing.
+          var rawSev = (f.severity != null ? String(f.severity) : "");
+          rawSevSeen[rawSev || "(empty)"] = (rawSevSeen[rawSev || "(empty)"]||0)+1;
+          var sevLow = rawSev.toLowerCase();
           var code = (f.diagnostic && (f.diagnostic.code || f.diagnostic.id)) || "fault";
           var diagId = f.diagnostic && f.diagnostic.id ? f.diagnostic.id : null;
           var faultStr = ((diagId||"") + " " + code).toLowerCase();
           var isDevice = /telematics|devicetype|invaliddevice|iox|harness|godevice|watchdog|firmware|tamper/.test(faultStr);
-          // Match MyGeotab's active view. Treat a fault as LIVE unless it's explicitly
-          // dismissed or in a cleared/inactive state — a denylist, so we never hide a
-          // genuinely active fault just because its state string is unfamiliar.
           var st = (f.faultState || "").toString();
           var stLow = st.toLowerCase();
           var dismissed = !!f.dismissDateTime;
           var cleared = stLow.indexOf("clear") >= 0 || stLow.indexOf("inactive") >= 0 || stLow.indexOf("resolved") >= 0;
-          var live = !dismissed && !cleared; // active/pending/unknown-state all count as live
+          var live = !dismissed && !cleared;
           by[did].items.push({
             diagId: diagId,
             code: code,
             controller: f.controller && f.controller.id ? f.controller.id : "",
-            severity: isRed ? "critical" : "warning",
+            rawSeverity: rawSev,      // Geotab's verbatim severity string
+            sevLow: sevLow,
+            severity: (sevLow.indexOf("crit")>=0 || sevLow.indexOf("severe")>=0 || sevLow.indexOf("high")>=0) ? "critical" : "warning", // coarse, for grouping keys
             isDevice: isDevice,
             first: f.dateTime || f.activeFrom || null,
             state: st,
@@ -533,6 +537,7 @@ geotab.addin.jackMaintenance = function () {
             dismissed: dismissed || cleared
           });
         });
+        try { console.log("[DynastyJack] Raw fault severities seen:", JSON.stringify(rawSevSeen)); } catch(e){}
         return by;
       });
     // If faults are slow/unavailable, don't block the dashboard — return empty after 15s.
@@ -616,20 +621,32 @@ geotab.addin.jackMaintenance = function () {
     ignore:   { label:"Ignore",    order:4, color:"faint", advise:"No vehicle impact — safe to ignore unless it recurs often." }
   };
   function riskRating(fault) {
-    // fault: { name, code, severity ('critical'|'warning'), isDevice }
+    // fault: { name, code, sevLow (raw Geotab severity, lowercased), isDevice }
     var name = (fault.name || fault.code || "").toLowerCase();
     // Device/telematics faults have no vehicle impact → ignore
     if (fault.isDevice) return "ignore";
-    // Geotab flagged it critical/high → trust that as at least "high", bump to critical for safety systems
-    if (fault.severity === "critical") {
-      if (/brak|abs|steer|coolant|overheat|oil pressure|fire|airbag/.test(name)) return "critical";
-      return "high";
+
+    // 1) TRUST Geotab's own severity when it gives us one. Map its enum → our tiers.
+    var sev = fault.sevLow || "";
+    if (sev) {
+      if (sev.indexOf("crit") >= 0 || sev.indexOf("severe") >= 0) return "critical";
+      if (sev.indexOf("high") >= 0) return "high";
+      if (sev.indexOf("medium") >= 0 || sev.indexOf("moderate") >= 0) return "medium";
+      if (sev.indexOf("low") >= 0) return "low";
+      // "warning" or other non-empty severity: fall through to heuristic to place it sensibly
+      if (sev.indexOf("warn") >= 0) {
+        if (/brak|abs|steer|airbag|oil pressure|coolant|overheat|derate|protection|dpf|aftertreatment|def|scr/.test(name)) return "high";
+        if (/misfire|cylinder|trans|gear|clutch|shift|nox|egr|turbo|boost|emission/.test(name)) return "medium";
+        return "low";
+      }
     }
-    // Heuristic fills the gap for non-critical (Geotab "warning"/unknown) faults, by system stakes
-    if (/brak|abs|steer|airbag|oil pressure|coolant|overheat/.test(name)) return "high";     // safety/engine-protection
-    if (/misfire|cylinder|trans|gear|clutch|shift|dpf|def|scr|nox|egr|turbo|boost/.test(name)) return "medium"; // drivability/emissions
-    if (/o2|oxygen|fuel trim|maf|map|evap|purge|sensor|lamp|light|bulb|tire|tpms|pressure|battery|voltage/.test(name)) return "low"; // minor/sensor
-    return "medium"; // unknown vehicle fault → default middle, not alarmist, not dismissive
+
+    // 2) No usable Geotab severity → keyword heuristic by system stakes.
+    // Expanded to catch engine-protection / emissions faults that read as serious.
+    if (/brak|abs|steer|airbag|oil pressure|coolant|overheat|derate|torque derate|engine protection|fire/.test(name)) return "high";
+    if (/dpf|aftertreatment|def|scr|nox|egr|misfire|cylinder|trans|gear|clutch|shift|turbo|boost/.test(name)) return "medium";
+    if (/o2|oxygen|fuel trim|maf|map|evap|purge|sensor|lamp|light|bulb|tire|tpms|pressure|battery|voltage/.test(name)) return "low";
+    return "medium"; // unknown vehicle fault → middle
   }
 
   // ---- health scoring ------------------------------------------------
@@ -659,7 +676,7 @@ geotab.addin.jackMaintenance = function () {
         var key = name + "|" + it.severity;
         if (seenTier[key]) return; // distinct faults only
         seenTier[key] = true;
-        var r = riskRating({ name:name, code:it.code, severity:it.severity, isDevice:false });
+        var r = riskRating({ name:name, code:it.code, sevLow:it.sevLow, isDevice:false });
         tierCounts[r] = (tierCounts[r]||0) + 1;
       });
       var seriousCount = tierCounts.critical + tierCounts.high;
@@ -931,7 +948,7 @@ geotab.addin.jackMaintenance = function () {
         var name = diagNameCache[it.diagId] || it.code || "Unknown fault";
         var isDev = it.isDevice || isDeviceFault(name, it.code);
         var key = name + "|" + it.severity;
-        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, isDevice:isDev, count:0, latest:null, earliest:null, live:false, dismissed:false };
+        if (!groups[key]) groups[key] = { name:name, code:it.code, severity:it.severity, sevLow:it.sevLow, isDevice:isDev, count:0, latest:null, earliest:null, live:false, dismissed:false };
         groups[key].count++;
         if (it.live) groups[key].live = true;        // any live occurrence → group is live
         if (it.dismissed) groups[key].dismissed = true;
@@ -1140,7 +1157,7 @@ geotab.addin.jackMaintenance = function () {
       var odoMeters = odoMap[device.id]; if (odoMeters==null) return;
       counts.total++;
       var rec = oilMap[device.id]||null;
-      var det = rec?rec.details:{ deviceId:device.id, deviceName:device.name, lastNotifiedMeters:odoMeters, intervalMiles:DEFAULT_INTERVAL_MILES, enabled:true, lastNotifiedDate:null };
+      var det = rec?rec.details:{ deviceId:device.id, deviceName:device.name, lastNotifiedMeters:odoMeters, intervalMiles:DEFAULT_INTERVAL_MILES, enabled:true, lastNotifiedDate:null, emailTo:null };
       var interval = det.intervalMiles||DEFAULT_INTERVAL_MILES;
       var since = (odoMeters-det.lastNotifiedMeters)/METERS_PER_UNIT;
       var pct = Math.max(0,Math.min(100,(since/interval)*100)), remaining = interval-since;
@@ -1166,15 +1183,31 @@ geotab.addin.jackMaintenance = function () {
         '<button id="clearOilFilter" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:6px; padding:3px 10px; font-size:12px; cursor:pointer;">Clear filter</button></div>';
     }
 
-    // Bulk "set interval for all" bar
-    var scopeNote = (oilFilter && oilFilter!=="all") ? "the filtered vehicles" : "all tracked vehicles";
-    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:18px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
-      '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Set interval for all</span>' +
-      '<input id="oil-bulk-interval" type="number" min="500" step="500" value="'+DEFAULT_INTERVAL_MILES+'" style="width:110px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
-      '<span style="font-size:13px; color:'+C.soft+';">'+UNITS+'</span>' +
-      '<button id="oil-bulk-apply" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
-      '<span style="flex:1;"></span>' +
-      '<span style="font-size:11.5px; color:'+C.faint+';">Applies to '+scopeNote+' shown below</span>' +
+    // Default email recipients — shared fleet default (same setting the Custom tab uses).
+    // Individual vehicles or a bulk apply can override this per vehicle.
+    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:12px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
+      '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Default email recipients</span>' +
+      '<span id="oil-default-email" style="flex:1; min-width:180px; font-size:13px; color:'+C.ink+';">'+esc((globalSettings&&globalSettings.defaultEmailTo)||"(none set \u2014 using fleet address)")+'</span>' +
+      '<button id="oil-edit-default" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
+    '</div>';
+
+    // Bulk "set for all shown vehicles" bar — interval + email.
+    // "Shown" respects the top group picker, so with a group selected this IS that whole group.
+    var selGroupName = selectedGroupId ? (groupNameMap()[selectedGroupId] || "this group") : null;
+    var scopeNote = (oilFilter && oilFilter!=="all") ? "the filtered vehicles" : (selGroupName ? "all of "+selGroupName : "all tracked vehicles");
+    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:18px; box-shadow:'+C.shadow+';">' +
+      '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
+        '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; min-width:120px;">Set interval for all</span>' +
+        '<input id="oil-bulk-interval" type="number" min="500" step="500" value="'+DEFAULT_INTERVAL_MILES+'" style="width:110px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
+        '<span style="font-size:13px; color:'+C.soft+';">'+UNITS+'</span>' +
+        '<button id="oil-bulk-apply" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
+      '</div>' +
+      '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+        '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; min-width:120px;">Set email for all</span>' +
+        '<input id="oil-bulk-email" type="text" placeholder="name@company.com, comma-separated" style="flex:1; min-width:200px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
+        '<button id="oil-bulk-email-apply" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
+      '</div>' +
+      '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:8px;">Applies to '+scopeNote+' shown below. Leave the email blank and apply to clear per-vehicle recipients (those vehicles fall back to the default above).</div>' +
     '</div>';
 
     oilEl.innerHTML = summary;
@@ -1269,6 +1302,10 @@ geotab.addin.jackMaintenance = function () {
         '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid '+C.line+';">' +
           '<span style="font-size:13px; color:'+C.soft+';">Interval <input type="number" min="500" step="500" value="'+interval+'" style="width:92px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> '+UNITS+'</span>' +
           '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" '+(det.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> Reminders on</label>' +
+          '<button data-act="email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
+          (det.emailTo
+            ? '<span style="font-size:11.5px; color:'+C.soft+'; max-width:230px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="'+esc(det.emailTo)+'">\u2192 '+esc(det.emailTo)+'</span>'
+            : '<span style="font-size:11.5px; color:'+C.faint+';">\u2192 using default</span>') +
           '<span style="flex:1;"></span>' +
           '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
           '<button data-act="save" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
@@ -1288,6 +1325,16 @@ geotab.addin.jackMaintenance = function () {
         var ol = (sensors && sensors.oilLife != null) ? sensors.oilLife : null;
         det.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "manual", oilLife: ol });
         persistOil(rec, det, device, oilMap).then(function () { toast(device.name+" marked serviced — confirmation queued"); reloadAll(); });
+      });
+      card.querySelector('[data-act="email"]').addEventListener("click", function () {
+        var current = det.emailTo || "";
+        var input = window.prompt("Email recipients for "+device.name+" (comma-separated). Leave blank to use the fleet default:", current);
+        if (input === null) return; // cancelled
+        det.emailTo = input.trim() || null; det.deviceName = device.name;
+        persistOil(rec, det, device, oilMap).then(function () {
+          toast(det.emailTo ? "Recipients updated for "+device.name : "Reset to fleet default for "+device.name);
+          renderOil(devices, odoMap, oilMap, sensorMap);
+        });
       });
       frag.appendChild(card);
     });
@@ -1319,6 +1366,36 @@ geotab.addin.jackMaintenance = function () {
         return persistOil(it.rec, det, it.device, oilMap);
       })).then(function () {
         toast("Interval set to "+fmt(val)+" "+UNITS+" for "+targets.length+" vehicle"+(targets.length===1?"":"s"));
+        reloadAll();
+      });
+    });
+
+    // wire default recipients editor (shared fleet default — same record the Custom tab edits)
+    var oilEditDefault = document.getElementById("oil-edit-default");
+    if (oilEditDefault) oilEditDefault.addEventListener("click", function () {
+      var current = (globalSettings && globalSettings.defaultEmailTo) || "";
+      var input = window.prompt("Default email recipients for the whole fleet (comma-separated). Individual vehicles can override this:", current);
+      if (input === null) return;
+      var det = { settingsKey:"global", defaultEmailTo: input.trim() || null };
+      saveGlobalSettings(det).then(function () { globalSettings = det; toast("Default recipients saved"); renderOil(devices, odoMap, oilMap, sensorMap); });
+    });
+
+    // wire bulk "set email for all" — applies to the currently visible vehicles (respects the group picker)
+    var bulkEmail = document.getElementById("oil-bulk-email-apply");
+    if (bulkEmail) bulkEmail.addEventListener("click", function () {
+      var val = (document.getElementById("oil-bulk-email").value || "").trim();
+      var targets = visible; // same filtered set the interval bulk uses
+      if (!targets.length) { toast("No vehicles to update"); return; }
+      var msg = val
+        ? "Set the email recipients to \""+val+"\" for "+targets.length+" vehicle"+(targets.length===1?"":"s")+"?"
+        : "Clear per-vehicle recipients (fall back to the fleet default) for "+targets.length+" vehicle"+(targets.length===1?"":"s")+"?";
+      if (!window.confirm(msg)) return;
+      Promise.all(targets.map(function (it) {
+        var det = it.det; // already the record's details or a fresh default (with emailTo)
+        det.emailTo = val || null; det.deviceName = it.device.name;
+        return persistOil(it.rec, det, it.device, oilMap);
+      })).then(function () {
+        toast((val?"Recipients set":"Recipients cleared")+" for "+targets.length+" vehicle"+(targets.length===1?"":"s"));
         reloadAll();
       });
     });
