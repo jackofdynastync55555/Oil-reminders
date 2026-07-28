@@ -50,6 +50,23 @@ if (SMTP_USER && SMTP_PASS) {
 const transporter = nodemailer.createTransport(transporterConfig);
 
 // ---------------------------------------------------------------------------
+// SINGLE SEND POINT
+// ---------------------------------------------------------------------------
+// Every email in this script goes through deliver(). To move to a different
+// email service later (Amazon SES, SendGrid, SMTP.com, Postmark, etc.), you
+// only change what's inside this function — nothing else in the file touches
+// the transport. Two common ways to swap:
+//   1) Stay on SMTP: just point SMTP_HOST/PORT/USER/PASS at the new provider's
+//      SMTP endpoint. No code change needed.
+//   2) Use a provider's native transport: swap the transporter above, e.g.
+//        const transporter = nodemailer.createTransport({ SES: sesClient });
+//      or install their nodemailer transport and drop it in here.
+// `to` accepts a comma-separated string of one or more recipients.
+async function deliver({ to, subject, text }) {
+  return transporter.sendMail({ from: EMAIL_FROM, to, subject, text });
+}
+
+// ---------------------------------------------------------------------------
 // Build the account list from numbered env vars
 // ---------------------------------------------------------------------------
 function loadAccounts() {
@@ -204,30 +221,43 @@ async function saveState(client, existing, details) {
   }
 }
 
-async function sendDigest(label, emailTo, dueVehicles) {
-  const lines = dueVehicles.map(
-    (v) =>
-      `\u2022 ${v.name} — ${Math.round(v.currentUnits).toLocaleString()} ${UNITS} ` +
-      `(${Math.round(v.sinceLastUnits).toLocaleString()} ${UNITS} since last reminder)`
-  );
-  const body = [
-    `The following vehicle(s) have reached their oil change interval:`,
-    ``,
-    ...lines,
-    ``,
-    `Counters have been reset automatically. The next reminder for each`,
-    `vehicle will be sent after it travels its configured interval again.`,
-    ``,
-    `— Automated reminder from Dynasty Communications fleet monitoring`,
-  ].join("\n");
+// The fleet-wide default recipients live in the custom store as a record with
+// settingsKey === "global" (set from either tab of the Add-In). Returns a
+// comma-separated string or null.
+async function getGlobalDefaultEmail(client) {
+  try {
+    const records = await client.call("Get", {
+      typeName: "AddInData",
+      search: { addInId: CUSTOM_ADD_IN_ID },
+    });
+    for (const rec of records) {
+      const d = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
+      if (d && d.settingsKey === "global") return (d.defaultEmailTo && d.defaultEmailTo.trim()) || null;
+    }
+  } catch (e) {
+    console.log(`  Could not read fleet default recipients: ${e.message}`);
+  }
+  return null;
+}
 
-  await transporter.sendMail({
-    from: EMAIL_FROM,
-    to: emailTo,
-    subject: `Oil change due: ${dueVehicles.length} vehicle(s)${label ? " — " + label : ""}`,
-    text: body,
-  });
-  console.log(`  Digest sent to ${emailTo} (${dueVehicles.length} vehicles)`);
+// Resolution order (same as the custom-reminder path):
+//   per-vehicle emailTo → fleet default → database default (DBn_EMAILTO) → none
+function resolveRecipient(perVehicle, globalDefault, accountDefault) {
+  const pv = perVehicle && String(perVehicle).trim();
+  return pv || globalDefault || accountDefault || null;
+}
+
+// Groups a list of items by their resolved recipient string.
+// Returns a Map: recipientString -> [items] (items with no recipient go under "__none__").
+function bucketByRecipient(items, globalDefault, accountDefault) {
+  const buckets = new Map();
+  for (const it of items) {
+    const to = resolveRecipient(it.emailTo, globalDefault, accountDefault);
+    const key = to || "__none__";
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(it);
+  }
+  return buckets;
 }
 
 async function sendServicedConfirmation(label, emailTo, servicedVehicles) {
@@ -245,8 +275,7 @@ async function sendServicedConfirmation(label, emailTo, servicedVehicles) {
     `— Automated confirmation from Dynasty Communications fleet monitoring`,
   ].join("\n");
 
-  await transporter.sendMail({
-    from: EMAIL_FROM,
+  await deliver({
     to: emailTo,
     subject: `Oil change reset confirmed: ${servicedVehicles.length} vehicle(s)${label ? " — " + label : ""}`,
     text: body,
@@ -270,6 +299,8 @@ async function processAccount(account) {
     getState(client),
   ]);
   console.log(`  Checking ${devices.length} vehicle(s)…`);
+
+  const globalDefaultEmail = await getGlobalDefaultEmail(client);
 
   const dueDigest = [];     // reached interval — auto-reset + unconfirmed warning
   const upcoming500 = [];   // 500 mi out
@@ -329,6 +360,7 @@ async function processAccount(account) {
         sinceLastUnits: sinceLast / METERS_PER_UNIT,
         intervalUnits: intervalMeters / METERS_PER_UNIT,
         oilLife: oilLife,
+        emailTo: details.emailTo || null,
       });
       details.lastNotifiedMeters = odoMeters;
       details.lastNotifiedDate = new Date().toISOString();
@@ -339,7 +371,7 @@ async function processAccount(account) {
       console.log(`    ${device.name}: DUE — auto-reset (service not confirmed)`);
     } else if (remainingMeters <= STAGE_500 && !details.stagesSent.s500) {
       const oilLife = await getOilLifePct(client, device.id);
-      upcoming500.push({ name: device.name, remainingUnits: remainingUnits, oilLife: oilLife });
+      upcoming500.push({ name: device.name, remainingUnits: remainingUnits, oilLife: oilLife, emailTo: details.emailTo || null });
       details.stagesSent.s500 = true;
       await saveState(client, existing, details);
       console.log(`    ${device.name}: 500-${UNITS} reminder sent`);
@@ -355,6 +387,7 @@ async function processAccount(account) {
       serviced.push({
         name: d.deviceName || deviceId,
         atUnits: (d.emailPendingOdoMeters != null ? d.emailPendingOdoMeters : d.lastNotifiedMeters) / METERS_PER_UNIT,
+        emailTo: d.emailTo || null,
       });
       // Clear the flag so it only emails once
       const cleared = { ...d };
@@ -365,18 +398,21 @@ async function processAccount(account) {
     }
   }
 
-  if (serviced.length > 0) {
-    if (account.emailTo) {
-      await sendServicedConfirmation(label, account.emailTo, serviced);
-    } else {
-      console.log(`  ${serviced.length} serviced confirmation(s) pending but no email set`);
-    }
+  // Send one digest per resolved recipient. A vehicle's recipient is:
+  //   its own emailTo (set per-asset or bulk-per-group in the Add-In)
+  //   → the fleet default (settingsKey=global) → DBn_EMAILTO → none.
+  // Vehicles sharing a recipient are combined into a single email to that address.
+  for (const [to, items] of bucketByRecipient(serviced, globalDefaultEmail, account.emailTo)) {
+    if (to === "__none__") { console.log(`  ${items.length} serviced confirmation(s) pending but no recipient resolved`); continue; }
+    await sendServicedConfirmation(label, to, items);
   }
-
-  const to = account.emailTo;
-  if (to) {
-    if (upcoming500.length > 0) await sendStageEmail(label, to, "500", upcoming500);
-    if (dueDigest.length > 0) await sendDueEmail(label, to, dueDigest);
+  for (const [to, items] of bucketByRecipient(upcoming500, globalDefaultEmail, account.emailTo)) {
+    if (to === "__none__") { console.log(`  ${items.length} upcoming reminder(s) but no recipient resolved`); continue; }
+    await sendStageEmail(label, to, "500", items);
+  }
+  for (const [to, items] of bucketByRecipient(dueDigest, globalDefaultEmail, account.emailTo)) {
+    if (to === "__none__") { console.log(`  ${items.length} due reminder(s) but no recipient resolved`); continue; }
+    await sendDueEmail(label, to, items);
   }
   if (!upcoming500.length && !dueDigest.length) {
     console.log(`  No oil reminders due this run.`);
@@ -403,8 +439,8 @@ async function sendStageEmail(label, to, stage, vehicles) {
     `This is an advance reminder — no action needed in Geotab.`,
     `The system will track these automatically.`,
     ``, `— Automated reminder from Dynasty Communications fleet monitoring`].join("\n");
-  await transporter.sendMail({
-    from: EMAIL_FROM, to,
+  await deliver({
+    to,
     subject: `Oil service ${stage === "500" ? "coming up" : "due soon"}: ${vehicles.length} vehicle(s)${label ? " — " + label : ""}`,
     text: body,
   });
@@ -429,8 +465,8 @@ async function sendDueEmail(label, to, vehicles) {
     ``,
     `— Automated reminder from Dynasty Communications fleet monitoring`,
   ].join("\n");
-  await transporter.sendMail({
-    from: EMAIL_FROM, to,
+  await deliver({
+    to,
     subject: `Oil interval reached (auto-reset): ${vehicles.length} vehicle(s)${label ? " — " + label : ""}`,
     text: body,
   });
@@ -510,9 +546,8 @@ async function processCustomReminders(client, account, label, odometerByDevice) 
       ``,
       `— Automated reminder from Dynasty Communications fleet monitoring`,
     ].join("\n");
-    // nodemailer accepts comma-separated recipients directly
-    await transporter.sendMail({
-      from: EMAIL_FROM,
+    // deliver() accepts comma-separated recipients directly
+    await deliver({
       to: key,
       subject: `Maintenance due: ${items.length} custom reminder(s)${label ? " — " + label : ""}`,
       text: body,
