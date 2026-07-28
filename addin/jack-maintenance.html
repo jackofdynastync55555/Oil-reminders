@@ -9,7 +9,8 @@
 <div id="root" style="max-width:940px; margin:0 auto; padding:24px 20px 64px;">
   <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px;">
     <div>
-      <div id="appTitle" style="font-size:23px; font-weight:700; letter-spacing:-0.02em;">DynastyJack Maintenance</div>
+      <div id="appEyebrow" style="font-size:11px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; margin-bottom:6px;">Dynasty Fleet Maintenance</div>
+      <div id="appTitle" style="font-size:26px; font-weight:800; letter-spacing:-0.02em;">DynastyJack Maintenance</div>
       <div id="appSub" style="margin-top:4px; font-size:13px;">Fleet-wide maintenance visibility — faults, service, and device health in one place.</div>
       <div id="lastUpdated" style="margin-top:3px; font-size:11.5px; opacity:0.7;"></div>
     </div>
@@ -50,14 +51,14 @@ var FAULT_LOOKBACK_DAYS = 7; // controlled by the range selector (24h / 7d / 30d
 // ---- Theme palettes --------------------------------------------------
 var THEMES = {
   dark: {
-    page:"#000000", card:"#0c0d10", card2:"#15171c", ink:"#eaf0f7", soft:"#9aa4b2",
-    faint:"#6b7480", line:"#23262e", brand:"#4aa8ff", brandSoft:"#0e2033", track:"#1a1c22",
-    green:"#3ecb7f", greenBg:"#0c2a1e", amber:"#f5893e", amberBg:"#2e1c0f", lowamber:"#e0a878", lowamberBg:"#241608",
-    red:"#ff6b63", redBg:"#2e1310", device:"#e8c84a", deviceBg:"#241f0b", purple:"#b98be6", purpleBg:"#1f1730", shadow:"0 2px 12px rgba(0,0,0,.7)"
+    page:"#0a0e15", card:"#121826", card2:"#1a2231", ink:"#eef2f8", soft:"#8b97a8",
+    faint:"#5c6675", line:"#232d3c", brand:"#f5a623", brandSoft:"#2a1f0c", onBrand:"#1c1403", track:"#1b2330",
+    green:"#3ecf8e", greenBg:"#0d2a20", amber:"#f5893e", amberBg:"#2e1c0f", lowamber:"#e0a878", lowamberBg:"#241608",
+    red:"#f87171", redBg:"#2e1414", device:"#e8c84a", deviceBg:"#241f0b", purple:"#b98be6", purpleBg:"#1f1730", shadow:"0 4px 20px rgba(0,0,0,.55)"
   },
   light: {
     page:"#f5f6f8", card:"#ffffff", card2:"#f8fafc", ink:"#16202b", soft:"#64748b",
-    faint:"#94a3b8", line:"#e6eaf0", brand:"#0b5fa5", brandSoft:"#e8f1fa", track:"#eef1f5",
+    faint:"#94a3b8", line:"#e6eaf0", brand:"#c2710f", brandSoft:"#fbf0e0", onBrand:"#ffffff", track:"#eef1f5",
     green:"#178a54", greenBg:"#e7f5ee", amber:"#d2691e", amberBg:"#fcecdf", lowamber:"#b5701f", lowamberBg:"#f9ede0",
     red:"#c0362f", redBg:"#fbe6e4", device:"#a8880c", deviceBg:"#fbf3cf", purple:"#7c3aed", purpleBg:"#f0e9fb", shadow:"0 1px 3px rgba(0,0,0,.08)"
   }
@@ -1210,12 +1211,12 @@ geotab.addin.jackMaintenance = function () {
         '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; min-width:120px;">Set interval for all</span>' +
         '<input id="oil-bulk-interval" type="number" min="500" step="500" value="'+DEFAULT_INTERVAL_MILES+'" style="width:110px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
         '<span style="font-size:13px; color:'+C.soft+';">'+UNITS+'</span>' +
-        '<button id="oil-bulk-apply" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
+        '<button id="oil-bulk-apply" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
       '</div>' +
       '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; padding-top:12px; border-top:1px solid '+C.line+';">' +
         '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; min-width:120px;">Set email for all</span>' +
         '<input id="oil-bulk-email" type="text" placeholder="name@company.com, comma-separated" style="flex:1; min-width:200px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
-        '<button id="oil-bulk-email-apply" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
+        '<button id="oil-bulk-email-apply" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
       '</div>' +
       '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:8px;">Applies to '+scopeNote+' shown below. Leave the email blank and apply to clear per-vehicle recipients (those vehicles fall back to the default above).</div>' +
     '</div>';
@@ -1290,7 +1291,7 @@ geotab.addin.jackMaintenance = function () {
       if (it.status==="off"){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
       else if (it.status==="due"){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
       else if (it.status==="soon"){ pillHtml=pill("Due soon \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.amberBg,C.amber); fill=C.amber; }
-      else { pillHtml=pill("On track \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.greenBg,C.green); fill=C.brand; }
+      else { pillHtml=pill("On track \u00b7 "+fmt(remaining)+" "+UNITS+" left",C.greenBg,C.green); fill=C.green; }
       var sensors = sensorMap[device.id];
       var oilLifeBadge = "";
       if (sensors && sensors.oilLife != null) {
@@ -1350,7 +1351,7 @@ geotab.addin.jackMaintenance = function () {
               : '<span style="font-size:11.5px; color:'+C.faint+';">\u2192 using default</span>') +
             '<span style="flex:1;"></span>' +
             '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
-            '<button data-act="save" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
+            '<button data-act="save" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
           '</div>' +
           histHtml +
         '</div>';
@@ -1539,7 +1540,7 @@ geotab.addin.jackMaintenance = function () {
           '<label style="font-size:12px; color:'+C.soft+';">Type<br><select id="cr-type" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="mi">Every X miles</option><option value="days">Every X days</option></select></label>' +
           '<label style="font-size:12px; color:'+C.soft+';">Interval<br><input id="cr-interval" type="number" min="1" value="5000" style="margin-top:4px; width:100px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"></label>' +
           '<label style="font-size:12px; color:'+C.soft+';">Email to<br><input id="cr-email" type="text" placeholder="optional" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:150px;"></label>' +
-          '<button id="cr-add" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Add reminder</button>' +
+          '<button id="cr-add" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Add reminder</button>' +
         '</div>' +
         '<div id="cr-mode-note" style="font-size:11.5px; color:'+C.soft+'; margin-top:10px; display:none;">A separate reminder will be created for each vehicle in the group, each tracking its own mileage. Limit one custom reminder per asset — vehicles that already have one are skipped.</div>' +
       '</div>';
@@ -1565,7 +1566,7 @@ geotab.addin.jackMaintenance = function () {
       if (d.enabled===false){ pillHtml=pill("Off",C.track,C.faint); fill=C.faint; }
       else if (remaining<=0){ pillHtml=pill("Due now",C.redBg,C.red); fill=C.red; }
       else if (pct>=85){ pillHtml=pill("Due soon",C.amberBg,C.amber); fill=C.amber; }
-      else { pillHtml=pill(fmt(Math.max(0,remaining))+" "+unit+" left",C.greenBg,C.green); fill=C.brand; }
+      else { pillHtml=pill(fmt(Math.max(0,remaining))+" "+unit+" left",C.greenBg,C.green); fill=C.green; }
 
       var histHtml = "";
       var hist = (d.history||[]).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
@@ -1642,7 +1643,7 @@ geotab.addin.jackMaintenance = function () {
             '<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">' +
               '<span style="font-size:12px; color:'+C.soft+';">Set interval for all:</span>' +
               '<input data-batchinterval="'+esc(bId)+'" type="number" min="1" value="'+d0.interval+'" style="width:100px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card+'; color:'+C.ink+';"> '+unit +
-              '<button data-batchsave="'+esc(bId)+'" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Apply to all '+recs.length+'</button>' +
+              '<button data-batchsave="'+esc(bId)+'" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Apply to all '+recs.length+'</button>' +
               '<button data-batchdelete="'+esc(bId)+'" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Delete all</button>' +
             '</div>' +
             recs.map(function (r){ return reminderCard(r, true); }).join("") +
@@ -1814,6 +1815,7 @@ geotab.addin.jackMaintenance = function () {
   function applyTheme() {
     C = THEMES[theme];
     if (bodyEl) { bodyEl.style.background = C.page; bodyEl.style.color = C.ink; }
+    var eye = $("appEyebrow"); if (eye) eye.style.color = C.brand;
     var sub = $("appSub"); if (sub) sub.style.color = C.soft;
     var tb = $("themeBtn");
     if (tb) {
