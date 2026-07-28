@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>DynastyJack Maintenance</title>
 </head>
-<body id="body" style="margin:0; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; font-size:14px; line-height:1.4;">
+<body id="body" style="margin:0; min-height:100vh; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; font-size:14px; line-height:1.4;">
 <div id="root" style="max-width:940px; margin:0 auto; padding:24px 20px 64px;">
   <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px;">
     <div>
@@ -50,10 +50,10 @@ var FAULT_LOOKBACK_DAYS = 7; // controlled by the range selector (24h / 7d / 30d
 // ---- Theme palettes --------------------------------------------------
 var THEMES = {
   dark: {
-    page:"#0f1620", card:"#18212e", card2:"#1e2836", ink:"#e8eef5", soft:"#94a3b8",
-    faint:"#64748b", line:"#2a3646", brand:"#3b9dff", brandSoft:"#12283f", track:"#243040",
-    green:"#3ecb7f", greenBg:"#123026", amber:"#f5893e", amberBg:"#3a2414", lowamber:"#e0a878", lowamberBg:"#332015",
-    red:"#ff6b63", redBg:"#3a1815", device:"#e8c84a", deviceBg:"#332d10", purple:"#b98be6", purpleBg:"#2a1f3d", shadow:"0 2px 8px rgba(0,0,0,.4)"
+    page:"#000000", card:"#0c0d10", card2:"#15171c", ink:"#eaf0f7", soft:"#9aa4b2",
+    faint:"#6b7480", line:"#23262e", brand:"#4aa8ff", brandSoft:"#0e2033", track:"#1a1c22",
+    green:"#3ecb7f", greenBg:"#0c2a1e", amber:"#f5893e", amberBg:"#2e1c0f", lowamber:"#e0a878", lowamberBg:"#241608",
+    red:"#ff6b63", redBg:"#2e1310", device:"#e8c84a", deviceBg:"#241f0b", purple:"#b98be6", purpleBg:"#1f1730", shadow:"0 2px 12px rgba(0,0,0,.7)"
   },
   light: {
     page:"#f5f6f8", card:"#ffffff", card2:"#f8fafc", ink:"#16202b", soft:"#64748b",
@@ -76,6 +76,7 @@ geotab.addin.jackMaintenance = function () {
   var oilFilter = null;     // null | 'all' | 'ok' | 'soon' | 'due' — oil summary filter
   var expandedHistory = {}; // deviceId -> true if its service history is expanded
   var expandedBatch = {};   // batchId -> true if a group reminder batch is expanded
+  var expandedOil = {};     // deviceId -> true if its oil card is expanded (collapsed by default)
   var globalSettings = { settingsKey:"global", defaultEmailTo:null };
 
   // ---- utils ---------------------------------------------------------
@@ -848,6 +849,11 @@ geotab.addin.jackMaintenance = function () {
 
   function assetCard(device, h, sensors) {
     var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:h.level==="device"?C.device:C.green;
+    // Backlight: a soft halo in the asset's status color so health reads at a glance
+    // on the black background. Light mode keeps the flat shadow.
+    var glow = theme==="dark"
+      ? "0 0 18px 1px "+edge+"4d, 0 0 44px 7px "+edge+"26, inset 0 0 0 1px "+edge+"33"
+      : C.shadow;
     var chips = "";
     if (h.faults && h.faults.items && h.faults.items.length) {
       var fs = faultSummary(h.faults); // distinct, live-only counts
@@ -878,7 +884,7 @@ geotab.addin.jackMaintenance = function () {
     var caret = isOpen ? "\u25be" : "\u25b8";
     var detail = isOpen ? detailPanel(device, h, sensors) : "";
 
-    return '<div id="asset-'+cssId(device.id)+'" style="background:'+C.card+'; border:1px solid '+C.line+'; border-left:4px solid '+edge+'; border-radius:10px; margin-bottom:10px; box-shadow:'+C.shadow+'; overflow:hidden;">' +
+    return '<div id="asset-'+cssId(device.id)+'" style="background:'+C.card+'; border:1px solid '+C.line+'; border-left:4px solid '+edge+'; border-radius:10px; margin-bottom:10px; box-shadow:'+glow+'; overflow:hidden;">' +
       '<div data-role="head" style="padding:14px 16px; cursor:pointer;">' +
         '<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">' +
           dot(edge) +
@@ -1079,6 +1085,10 @@ geotab.addin.jackMaintenance = function () {
   function carDiagram(level, sys, sensors) {
     var bodyFill = level==="red"?C.redBg:level==="amber"?C.amberBg:C.greenBg;
     var bodyStroke = level==="red"?C.red:level==="amber"?C.amber:level==="device"?C.device:C.green;
+    // Backlight the vehicle graphic itself in its status color (dark mode only).
+    var carGlow = theme==="dark"
+      ? 'filter:drop-shadow(0 0 4px '+bodyStroke+') drop-shadow(0 0 13px '+bodyStroke+'aa); overflow:visible;'
+      : 'overflow:visible;';
 
     // Each system zone gets its OWN status color: green healthy, amber = warning
     // fault weight, red = critical. This sits on top of the overall body tint.
@@ -1120,7 +1130,7 @@ geotab.addin.jackMaintenance = function () {
       return '<span style="display:inline-flex; align-items:center; gap:4px; margin:0 6px;"><span style="width:9px;height:9px;border-radius:50%;background:'+color+';display:inline-block;"></span><span style="font-size:10.5px;color:'+C.soft+';">'+text+'</span></span>';
     }
 
-    return '<svg viewBox="0 0 210 340" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vehicle status diagram">' +
+    return '<svg viewBox="0 0 210 340" width="100%" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Vehicle status diagram" style="'+carGlow+'">' +
       '<text x="105" y="16" font-size="11" text-anchor="middle" fill="'+C.soft+'">FRONT</text>' +
       // body (overall health tint)
       '<rect x="52" y="26" width="106" height="266" rx="24" fill="'+bodyFill+'" stroke="'+bodyStroke+'" stroke-width="3"/>' +
@@ -1226,6 +1236,21 @@ geotab.addin.jackMaintenance = function () {
       });
     }
 
+    // Build per-group buckets so each group header can carry an on/off toggle
+    // for all of its (currently shown) vehicles.
+    var oilGroupList = [];
+    var groupIndexByPath = {};
+    if (hasAnyGroup) {
+      visible.forEach(function (it) {
+        var p = it.group.path.join(" / ");
+        if (!(p in groupIndexByPath)) {
+          groupIndexByPath[p] = oilGroupList.length;
+          oilGroupList.push({ name: it.group.path[it.group.path.length-1] || "Group", path: p, items: [] });
+        }
+        oilGroupList[groupIndexByPath[p]].items.push(it);
+      });
+    }
+
     var frag = document.createElement("div");
     var lastGroupPath = null;
 
@@ -1242,8 +1267,20 @@ geotab.addin.jackMaintenance = function () {
             var isLast = i === it.group.path.length-1;
             return '<span style="color:'+(isLast?C.ink:C.soft)+'; font-weight:'+(isLast?'700':'500')+';">'+esc(seg)+'</span>';
           }).join('<span style="color:'+C.faint+'; margin:0 6px;">\u203a</span>');
+          var gIdx = groupIndexByPath[pathStr];
+          var gInfo = oilGroupList[gIdx];
+          var gEnabled = gInfo.items.filter(function (x){ return x.det.enabled!==false; }).length;
+          var gTotal = gInfo.items.length;
+          var gAllOn = gEnabled===gTotal, gNoneOn = gEnabled===0;
+          var gCol = gAllOn?C.green:(gNoneOn?C.faint:C.amber);
+          var gBg = gAllOn?C.greenBg:(gNoneOn?C.track:C.amberBg);
+          var gLbl = gAllOn?"Auto reminders on":(gNoneOn?"Auto reminders off":"Auto reminders "+gEnabled+"/"+gTotal);
           header.innerHTML = '<span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:'+C.brand+';">Group</span>' +
-            '<span style="font-size:13.5px;">'+crumb+'</span>';
+            '<span style="font-size:13.5px;">'+crumb+'</span>' +
+            '<span style="flex:1;"></span>' +
+            '<button data-oilgroup="'+gIdx+'" title="Turn auto oil reminders on or off for every vehicle in this group" style="border:1px solid '+C.line+'; background:'+gBg+'; color:'+gCol+'; border-radius:999px; padding:5px 12px; font-size:12px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px; white-space:nowrap;">' +
+              '<span style="width:8px; height:8px; border-radius:50%; background:'+gCol+'; display:inline-block;"></span>'+gLbl+
+            '</button>';
           frag.appendChild(header);
         }
       }
@@ -1289,28 +1326,34 @@ geotab.addin.jackMaintenance = function () {
 
       var card = document.createElement("div");
       card.style.cssText = "background:"+C.card+"; border:1px solid "+C.line+"; border-radius:12px; padding:16px 18px; margin-bottom:12px; box-shadow:"+C.shadow+";";
+      var isCardOpen = !!expandedOil[device.id];
       card.innerHTML =
-        '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px;">' +
+        '<div data-oiltoggle="'+esc(device.id)+'" style="display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none;">' +
+          '<span style="font-size:13px; color:'+C.faint+'; width:12px;">'+(isCardOpen?"\u25be":"\u25b8")+'</span>' +
           '<span style="font-size:16px; font-weight:650; color:'+C.ink+';">'+esc(device.name)+'</span>' +
-          '<span style="font-size:13px; color:'+C.soft+';">'+oilLifeBadge+fmt(odoMeters/METERS_PER_UNIT)+' '+UNITS+' total</span></div>' +
-        '<div><div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;">' +
-          '<div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
-          '<div style="display:flex; justify-content:space-between; margin-top:7px; font-size:12px; color:'+C.soft+';">' +
-            '<span>'+fmt(Math.max(0,since))+' / '+fmt(interval)+' '+UNITS+'</span>'+pillHtml+'</div>' +
+          '<span style="flex:1;"></span>' +
+          oilLifeBadge + pillHtml +
+          '<span style="font-size:13px; color:'+C.soft+'; margin-left:12px;">'+fmt(odoMeters/METERS_PER_UNIT)+' '+UNITS+' total</span>' +
+        '</div>' +
+        '<div style="display:'+(isCardOpen?"block":"none")+'; margin-top:14px;">' +
+          '<div><div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;">' +
+            '<div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
+            '<div style="margin-top:7px; font-size:12px; color:'+C.soft+';">'+fmt(Math.max(0,since))+' / '+fmt(interval)+' '+UNITS+'</div>' +
             (predTxt && it.status!=="due" && it.status!=="off" ? '<div style="margin-top:6px; font-size:11.5px; color:'+C.soft+'; opacity:0.85;">\uD83D\uDCC5 Predicted: '+esc(predTxt)+' (based on last 30 days of mileage)</div>' : '') +
           '</div>' +
-        '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid '+C.line+';">' +
-          '<span style="font-size:13px; color:'+C.soft+';">Interval <input type="number" min="500" step="500" value="'+interval+'" style="width:92px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> '+UNITS+'</span>' +
-          '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" '+(det.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> Reminders on</label>' +
-          '<button data-act="email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
-          (det.emailTo
-            ? '<span style="font-size:11.5px; color:'+C.soft+'; max-width:230px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="'+esc(det.emailTo)+'">\u2192 '+esc(det.emailTo)+'</span>'
-            : '<span style="font-size:11.5px; color:'+C.faint+';">\u2192 using default</span>') +
-          '<span style="flex:1;"></span>' +
-          '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
-          '<button data-act="save" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
-        '</div>' +
-        histHtml;
+          '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid '+C.line+';">' +
+            '<span style="font-size:13px; color:'+C.soft+';">Interval <input type="number" min="500" step="500" value="'+interval+'" style="width:92px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> '+UNITS+'</span>' +
+            '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" '+(det.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> Reminders on</label>' +
+            '<button data-act="email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
+            (det.emailTo
+              ? '<span style="font-size:11.5px; color:'+C.soft+'; max-width:230px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="'+esc(det.emailTo)+'">\u2192 '+esc(det.emailTo)+'</span>'
+              : '<span style="font-size:11.5px; color:'+C.faint+';">\u2192 using default</span>') +
+            '<span style="flex:1;"></span>' +
+            '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
+            '<button data-act="save" style="border:none; background:'+C.brand+'; color:#fff; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
+          '</div>' +
+          histHtml +
+        '</div>';
       var intervalInput = card.querySelector('input[type="number"]');
       var enabledInput = card.querySelector('input[type="checkbox"]');
       card.querySelector('[data-act="save"]').addEventListener("click", function () {
@@ -1405,6 +1448,33 @@ geotab.addin.jackMaintenance = function () {
       el.addEventListener("click", function () {
         var id = el.getAttribute("data-histtoggle");
         expandedHistory[id] = !expandedHistory[id];
+        renderOil(devices, odoMap, oilMap, sensorMap);
+      });
+    });
+
+    // wire per-group auto-reminder on/off toggles
+    oilEl.querySelectorAll('[data-oilgroup]').forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var gInfo = oilGroupList[Number(btn.getAttribute("data-oilgroup"))];
+        if (!gInfo || !gInfo.items.length) return;
+        var allOn = gInfo.items.every(function (x){ return x.det.enabled!==false; });
+        var target = !allOn; // everyone on -> turn off; otherwise turn everyone on
+        if (!window.confirm((target?"Turn auto oil reminders ON":"Turn auto oil reminders OFF")+" for all "+gInfo.items.length+" vehicle"+(gInfo.items.length===1?"":"s")+" in "+gInfo.name+"?")) return;
+        Promise.all(gInfo.items.map(function (it) {
+          var det = it.det; det.enabled = target; det.deviceName = it.device.name;
+          return persistOil(it.rec, det, it.device, oilMap);
+        })).then(function () {
+          toast((target?"Auto reminders on":"Auto reminders off")+" \u00b7 "+gInfo.name+" ("+gInfo.items.length+")");
+          reloadAll();
+        });
+      });
+    });
+
+    // wire per-asset collapse toggles (cards start collapsed, like Fleet Health)
+    oilEl.querySelectorAll('[data-oiltoggle]').forEach(function (el) {
+      el.addEventListener("click", function () {
+        var id = el.getAttribute("data-oiltoggle");
+        expandedOil[id] = !expandedOil[id];
         renderOil(devices, odoMap, oilMap, sensorMap);
       });
     });
