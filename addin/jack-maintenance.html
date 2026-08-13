@@ -4,37 +4,104 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>DynastyJack Maintenance</title>
+<style>
+  /* ---- Dark shell -------------------------------------------------- */
+  html, body { background:#070a0f; }
+  body {
+    background:
+      radial-gradient(1100px 520px at 50% -12%, #131c2b 0%, rgba(19,28,43,0) 62%),
+      radial-gradient(760px 400px at 100% 0%, #1a1408 0%, rgba(26,20,8,0) 55%),
+      #070a0f !important;
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  * { box-sizing: border-box; }
+  ::selection { background: rgba(245,166,35,.26); }
+
+  /* thin dark scrollbars so the app doesn't get a bright gutter */
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background:#232e3d; border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background:#31405480; background-clip:padding-box; }
+
+  /* ---- Backlit panels ---------------------------------------------
+     Every card in this app is a rounded 12px div. Rather than editing a
+     hundred inline styles, the glow is applied here: a hairline rim, a
+     warm bloom bleeding out from the edge, and a deep drop so panels
+     read as lit-from-behind rather than as flat boxes. */
+  #root div[style*="border-radius:12px"] {
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.045),
+      0 0 0 1px rgba(245,166,35,.045),
+      0 0 24px -10px rgba(245,166,35,.30),
+      0 16px 38px -20px rgba(0,0,0,.95) !important;
+    transition: box-shadow .18s ease, border-color .18s ease;
+  }
+  #root div[style*="border-radius:12px"]:hover {
+    border-color: rgba(245,166,35,.28) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.06),
+      0 0 0 1px rgba(245,166,35,.11),
+      0 0 34px -8px rgba(245,166,35,.42),
+      0 18px 44px -20px rgba(0,0,0,.95) !important;
+  }
+
+  /* ---- Controls ----------------------------------------------------- */
+  #root input, #root select, #root button, #root textarea { font-family: inherit; outline: none; }
+  #root input:focus, #root select:focus {
+    border-color: rgba(245,166,35,.55) !important;
+    box-shadow: 0 0 0 3px rgba(245,166,35,.13) !important;
+  }
+  #root button { transition: filter .15s ease, box-shadow .15s ease, border-color .15s ease; }
+  #root button:hover { filter: brightness(1.18); }
+  #root button:active { transform: translateY(1px); }
+  #root select { appearance: none; -webkit-appearance: none; padding-right: 26px !important;
+    background-image: linear-gradient(45deg, transparent 50%, #7d8899 50%), linear-gradient(135deg, #7d8899 50%, transparent 50%);
+    background-position: calc(100% - 15px) calc(50% + 1px), calc(100% - 10px) calc(50% + 1px);
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  #root input[type="checkbox"] { accent-color:#f5a623; }
+
+  /* ---- Header rail --------------------------------------------------- */
+  #appRail { height:2px; border-radius:2px; margin-bottom:16px;
+    background: linear-gradient(90deg, #f5a623 0%, #b9761a 22%, rgba(245,166,35,0) 68%);
+    box-shadow: 0 0 14px rgba(245,166,35,.55); }
+</style>
 </head>
 <body id="body" style="margin:0; min-height:100vh; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; font-size:14px; line-height:1.4;">
-<div id="root" style="max-width:940px; margin:0 auto; padding:24px 20px 64px;">
-  <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px;">
-    <div>
-      <div id="appEyebrow" style="font-size:11px; font-weight:700; letter-spacing:0.16em; text-transform:uppercase; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; margin-bottom:6px;">Dynasty Fleet Maintenance</div>
-      <div id="appTitle" style="font-size:26px; font-weight:800; letter-spacing:-0.02em;">DynastyJack Maintenance</div>
-      <div id="appSub" style="margin-top:4px; font-size:13px;">Fleet-wide maintenance visibility — faults, service, and device health in one place.</div>
-      <div id="lastUpdated" style="margin-top:3px; font-size:11.5px; opacity:0.7;"></div>
+<div id="root" style="max-width:1180px; margin:0 auto; padding:16px 20px 44px;">
+  <div id="appRail"></div>
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px;">
+    <div style="min-width:0;">
+      <div id="appEyebrow" style="font-size:10px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; margin-bottom:3px;">Dynasty Fleet Maintenance</div>
+      <div id="appTitle" style="font-size:21px; font-weight:750; letter-spacing:-0.022em; line-height:1.15;">DynastyJack Maintenance</div>
+      <div id="lastUpdated" style="margin-top:3px; font-size:11px; letter-spacing:.02em;"></div>
     </div>
-    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <select id="rangeSelect" style="border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer;" title="Fault lookback window">
+    <div style="display:flex; gap:7px; align-items:center; flex-wrap:wrap;">
+      <select id="rangeSelect" style="border-radius:8px; padding:7px 10px; font-size:12.5px; cursor:pointer;" title="Fault lookback window">
         <option value="1">Last 24 hours</option>
         <option value="7" selected>Last 7 days</option>
         <option value="30">Last month</option>
       </select>
-      <select id="groupSelect" style="border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; max-width:220px;"></select>
-      <button id="themeBtn" style="border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer;">Light</button>
-      <button id="refreshBtn" style="border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Refresh</button>
+      <select id="groupSelect" style="border-radius:8px; padding:7px 10px; font-size:12.5px; cursor:pointer; max-width:230px;"></select>
+      <button id="refreshBtn" style="border-radius:8px; padding:7px 15px; font-size:12.5px; font-weight:650; cursor:pointer;">Refresh</button>
     </div>
   </div>
+  <div id="appSub" style="display:none;"></div>
 
-  <div id="tabs" style="display:flex; gap:4px; margin-bottom:20px; flex-wrap:wrap;">
-    <button data-tab="health" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Fleet Health</button>
-    <button data-tab="oil" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Oil Reminders</button>
-    <button data-tab="custom" style="background:none; border:none; font-weight:600; font-size:14px; padding:10px 16px; cursor:pointer;">Custom Reminders</button>
+  <div id="tabs" style="display:inline-flex; gap:3px; margin-bottom:14px; flex-wrap:wrap; padding:3px; border-radius:10px;">
+    <button data-tab="health" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Fleet Health</button>
+    <button data-tab="oil" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Oil Reminders</button>
+    <button data-tab="custom" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Custom Reminders</button>
+    <button data-tab="report" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Reporting</button>
+    <button data-tab="settings" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Settings</button>
   </div>
 
   <div id="health"></div>
   <div id="oil" style="display:none;"></div>
   <div id="custom" style="display:none;"></div>
+  <div id="report" style="display:none;"></div>
+  <div id="settings" style="display:none;"></div>
 </div>
 <div id="toast" style="position:fixed; bottom:22px; left:50%; transform:translateX(-50%) translateY(10px); padding:10px 20px; border-radius:10px; font-size:13px; font-weight:500; opacity:0; pointer-events:none; transition:opacity .22s, transform .22s; z-index:99;"></div>
 
@@ -44,30 +111,27 @@
 var ADD_IN_ID = "aWI4NTRlNjItNzc5Ny0wOTB";
 var CUSTOM_ADD_IN_ID = "ajE5ODViNGYtOTJmZC0wODk"; // separate store for custom reminders
 var DEFAULT_INTERVAL_MILES = 5000;
+var MAX_CUSTOM_PER_ASSET = 5; // how many custom reminders one vehicle may have
 var UNITS = "mi";
 var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
 var FAULT_LOOKBACK_DAYS = 7; // controlled by the range selector (24h / 7d / 30d)
 
-// ---- Theme palettes --------------------------------------------------
+// ---- Theme ------------------------------------------------------------
+// Dark only. The panel glow lives in C.shadow and is reinforced by the
+// #root rule in the <style> block above, which catches nested cards too.
 var THEMES = {
   dark: {
-    page:"#0a0e15", card:"#121826", card2:"#1a2231", ink:"#eef2f8", soft:"#8b97a8",
-    faint:"#5c6675", line:"#232d3c", brand:"#f5a623", brandSoft:"#2a1f0c", onBrand:"#1c1403", track:"#1b2330",
-    green:"#3ecf8e", greenBg:"#0d2a20", amber:"#f5893e", amberBg:"#2e1c0f", lowamber:"#e0a878", lowamberBg:"#241608",
-    red:"#f87171", redBg:"#2e1414", device:"#e8c84a", deviceBg:"#241f0b", purple:"#b98be6", purpleBg:"#1f1730", shadow:"0 4px 20px rgba(0,0,0,.55)"
-  },
-  light: {
-    page:"#f5f6f8", card:"#ffffff", card2:"#f8fafc", ink:"#16202b", soft:"#64748b",
-    faint:"#94a3b8", line:"#e6eaf0", brand:"#c2710f", brandSoft:"#fbf0e0", onBrand:"#ffffff", track:"#eef1f5",
-    green:"#178a54", greenBg:"#e7f5ee", amber:"#d2691e", amberBg:"#fcecdf", lowamber:"#b5701f", lowamberBg:"#f9ede0",
-    red:"#c0362f", redBg:"#fbe6e4", device:"#a8880c", deviceBg:"#fbf3cf", purple:"#7c3aed", purpleBg:"#f0e9fb", shadow:"0 1px 3px rgba(0,0,0,.08)"
+    page:"#070a0f", card:"#0e131c", card2:"#151c28", ink:"#e9eef7", soft:"#7f8b9d",
+    faint:"#515c6c", line:"#1e2836", brand:"#f5a623", brandSoft:"#2c2010", onBrand:"#150f02", track:"#161e2a",
+    green:"#37d399", greenBg:"#0b2a20", amber:"#f79245", amberBg:"#2f1d0e", lowamber:"#e3ac7c", lowamberBg:"#251707",
+    red:"#fb7185", redBg:"#2f1318", device:"#ecd04e", deviceBg:"#26200a", purple:"#c08cf0", purpleBg:"#201731",
+    shadow:"inset 0 1px 0 rgba(255,255,255,.045), 0 0 0 1px rgba(245,166,35,.045), 0 0 24px -10px rgba(245,166,35,.30), 0 16px 38px -20px rgba(0,0,0,.95)"
   }
 };
-var theme = "dark";
-var C = THEMES[theme];
+var C = THEMES.dark;
 
 geotab.addin.jackMaintenance = function () {
-  var api, toastEl, healthEl, oilEl, customEl, bodyEl, rootEl, groupSelectEl;
+  var api, toastEl, healthEl, oilEl, customEl, reportEl, settingsEl, bodyEl, rootEl, groupSelectEl;
   var allGroups = [];        // raw group list
   var groupChildren = {};    // parentId -> [childId,...]
   var selectedGroupId = null; // null = whole fleet
@@ -78,7 +142,24 @@ geotab.addin.jackMaintenance = function () {
   var expandedHistory = {}; // deviceId -> true if its service history is expanded
   var expandedBatch = {};   // batchId -> true if a group reminder batch is expanded
   var expandedOil = {};     // deviceId -> true if its oil card is expanded (collapsed by default)
-  var globalSettings = { settingsKey:"global", defaultEmailTo:null };
+  // Fleet-wide settings, shared with check-oil-reminders.js via the custom
+  // AddInData store (the record whose settingsKey === "global").
+  var DEFAULT_REPORT = {
+    enabled:false, frequency:"daily", dayOfWeek:1, time:"07:00",
+    timezone:"America/New_York", recipients:"",
+    assetMode:"all", groupIds:[], deviceIds:[],
+    testPending:false, lastSentKey:null, lastSentAt:null
+  };
+  var DEFAULT_SETTINGS = {
+    settingsKey:"global",
+    defaultEmailTo:null,
+    autoResetOil:true,     // false => oil reminders stay due until marked serviced
+    autoResetCustom:true,  // false => custom reminders stay due until marked done
+    report:null
+  };
+  var globalSettings = { settingsKey:"global", defaultEmailTo:null, autoResetOil:true, autoResetCustom:true, report:null };
+  var reportDraft = null;   // working copy of globalSettings.report while editing
+  var assetFilterText = ""; // search box in the Reporting asset picker
 
   // ---- utils ---------------------------------------------------------
   function toast(msg) {
@@ -233,6 +314,7 @@ geotab.addin.jackMaintenance = function () {
   // marked with settingsKey so it's distinct from reminder records.
   var globalSettingsRec = null;
   function getGlobalSettings() {
+    var fallback = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
     return apiCall("Get", { typeName: "AddInData", search: { addInId: CUSTOM_ADD_IN_ID } }).then(function (recs) {
       var found = null;
       recs.forEach(function (r) {
@@ -240,8 +322,18 @@ geotab.addin.jackMaintenance = function () {
         if (det && det.settingsKey === "global") found = { id:r.id, details:det };
       });
       globalSettingsRec = found;
-      return found ? found.details : { settingsKey:"global", defaultEmailTo:null };
-    }).catch(function(){ return { settingsKey:"global", defaultEmailTo:null }; });
+      if (!found) return fallback;
+      // Merge over defaults so records written by older versions of the
+      // Add-In still come back with every field present.
+      var merged = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+      Object.keys(found.details).forEach(function (k){ merged[k] = found.details[k]; });
+      if (merged.report) {
+        var r = JSON.parse(JSON.stringify(DEFAULT_REPORT));
+        Object.keys(merged.report).forEach(function (k){ r[k] = merged.report[k]; });
+        merged.report = r;
+      }
+      return merged;
+    }).catch(function(){ return fallback; });
   }
   function saveGlobalSettings(details) {
     var entity = { addInId:CUSTOM_ADD_IN_ID, groups:[{id:"GroupCompanyId"}], details:details };
@@ -250,6 +342,16 @@ geotab.addin.jackMaintenance = function () {
     return apiCall(method, { typeName:"AddInData", entity:entity }).then(function (newId){
       if (!globalSettingsRec) globalSettingsRec = { id:newId, details:details }; else globalSettingsRec.details = details;
     });
+  }
+  // Merge a partial change into the global settings record. Always use this
+  // rather than building a fresh object — a bare {settingsKey, defaultEmailTo}
+  // write would silently drop the auto-reset flags and report schedule.
+  function patchSettings(partial) {
+    var next = {};
+    Object.keys(globalSettings).forEach(function (k){ next[k] = globalSettings[k]; });
+    Object.keys(partial).forEach(function (k){ next[k] = partial[k]; });
+    next.settingsKey = "global";
+    return saveGlobalSettings(next).then(function () { globalSettings = next; return next; });
   }
   function getOdometers(devices) {
     var now = new Date().toISOString();
@@ -767,10 +869,10 @@ geotab.addin.jackMaintenance = function () {
     var counts = { red:0, amber:0, device:0, green:0 };
     scored.forEach(function (s){ counts[s.health.level]++; });
 
-    var html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px;">' +
+    var html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">' +
       sumCard(counts.red,"Need service",C.red,"red") + sumCard(counts.amber,"Watch",C.amber,"amber") +
       sumCard(counts.device,"Device issues",C.device,"device") +
-      sumCard(counts.green,"Healthy",C.green,"green") + sumCard(devices.length,"Total assets",C.ink,"all") + '</div>';
+      sumCard(counts.green,"Healthy",C.green,"green") + sumCard(devices.length,"Total assets",C.soft,"all") + '</div>';
 
     // Apply filter
     var visible = healthFilter ? scored.filter(function (s){ return s.health.level===healthFilter; }) : scored;
@@ -795,7 +897,7 @@ geotab.addin.jackMaintenance = function () {
       });
     }
 
-    if (!devices.length) html = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">No assets found.</div>';
+    if (!devices.length) html = '<div style="text-align:center; color:'+C.soft+'; padding:34px 18px;">No assets found.</div>';
     healthEl.innerHTML = html;
 
     // wire summary-card filter clicks
@@ -825,10 +927,15 @@ geotab.addin.jackMaintenance = function () {
   function sumCard(num, label, fg, filterKey) {
     var active = (filterKey==="all") ? (healthFilter===null) : (healthFilter && healthFilter===filterKey);
     var clickable = filterKey!=null;
-    var border = active ? "2px solid "+fg : "1px solid "+C.line;
-    return '<div '+(clickable?'data-filter="'+filterKey+'" ':'')+'style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:12px 16px; flex:1; min-width:120px; box-shadow:'+C.shadow+';'+(clickable?' cursor:pointer;':'')+'">' +
-      '<div style="font-size:26px; font-weight:700; letter-spacing:-0.02em; color:'+fg+';">'+num+'</div>' +
-      '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+label+(clickable?' \u203a':'')+'</div></div>';
+    // Active state is a backlit ring in the metric's own colour rather than a
+    // heavy white outline — keeps the row calm while still reading as selected.
+    var border = "1px solid " + (active ? fg+"66" : C.line);
+    var shadow = active
+      ? "inset 0 0 0 1px "+fg+"3d, 0 0 22px -6px "+fg+"7a, 0 12px 30px -18px rgba(0,0,0,.95)"
+      : C.shadow;
+    return '<div '+(clickable?'data-filter="'+filterKey+'" ':'')+'style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:10px 13px; flex:1; min-width:120px; box-shadow:'+shadow+';'+(clickable?' cursor:pointer;':'')+'">' +
+      '<div style="font-size:24px; font-weight:700; letter-spacing:-0.025em; line-height:1.1; color:'+fg+';">'+num+'</div>' +
+      '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px;">'+label+(clickable?' \u203a':'')+'</div></div>';
   }
   function sectionLabel(t) {
     return '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:18px 2px 10px;">'+t+'</div>';
@@ -850,11 +957,9 @@ geotab.addin.jackMaintenance = function () {
 
   function assetCard(device, h, sensors) {
     var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:h.level==="device"?C.device:C.green;
-    // Backlight: a soft halo in the asset's status color so health reads at a glance
-    // on the black background. Light mode keeps the flat shadow.
-    var glow = theme==="dark"
-      ? "0 0 18px 1px "+edge+"4d, 0 0 44px 7px "+edge+"26, inset 0 0 0 1px "+edge+"33"
-      : C.shadow;
+    // Backlight: a soft halo in the asset's status colour so health reads at a
+    // glance against the black background.
+    var glow = "0 0 18px 1px "+edge+"4d, 0 0 44px 7px "+edge+"26, inset 0 0 0 1px "+edge+"33";
     var chips = "";
     if (h.faults && h.faults.items && h.faults.items.length) {
       var fs = faultSummary(h.faults); // distinct, live-only counts
@@ -886,7 +991,7 @@ geotab.addin.jackMaintenance = function () {
     var detail = isOpen ? detailPanel(device, h, sensors) : "";
 
     return '<div id="asset-'+cssId(device.id)+'" style="background:'+C.card+'; border:1px solid '+C.line+'; border-left:4px solid '+edge+'; border-radius:10px; margin-bottom:10px; box-shadow:'+glow+'; overflow:hidden;">' +
-      '<div data-role="head" style="padding:14px 16px; cursor:pointer;">' +
+      '<div data-role="head" style="padding:11px 13px; cursor:pointer;">' +
         '<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">' +
           dot(edge) +
           '<span style="font-size:15px; font-weight:650; flex:1; color:'+C.ink+';">'+esc(device.name)+'</span>' +
@@ -1076,7 +1181,7 @@ geotab.addin.jackMaintenance = function () {
     var rows = sensors._raw.map(function (r) {
       return '<div style="font-size:11px; color:'+C.soft+'; padding:2px 0; font-family:monospace;">'+esc(r.name)+' = '+esc(String(r.value))+'</div>';
     }).join("");
-    return '<div style="margin-top:14px; padding-top:12px; border-top:1px dashed '+C.line+';">' +
+    return '<div style="margin-top:11px; padding-top:10px; border-top:1px dashed '+C.line+';">' +
       '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.amber+'; margin-bottom:4px;">Debug: raw diagnostics ('+sensors._raw.length+')</div>' +
       rows +
     '</div>';
@@ -1086,10 +1191,8 @@ geotab.addin.jackMaintenance = function () {
   function carDiagram(level, sys, sensors) {
     var bodyFill = level==="red"?C.redBg:level==="amber"?C.amberBg:C.greenBg;
     var bodyStroke = level==="red"?C.red:level==="amber"?C.amber:level==="device"?C.device:C.green;
-    // Backlight the vehicle graphic itself in its status color (dark mode only).
-    var carGlow = theme==="dark"
-      ? 'filter:drop-shadow(0 0 4px '+bodyStroke+') drop-shadow(0 0 13px '+bodyStroke+'aa); overflow:visible;'
-      : 'overflow:visible;';
+    // Backlight the vehicle graphic itself in its status colour.
+    var carGlow = 'filter:drop-shadow(0 0 4px '+bodyStroke+') drop-shadow(0 0 13px '+bodyStroke+'aa); overflow:visible;';
 
     // Each system zone gets its OWN status color: green healthy, amber = warning
     // fault weight, red = critical. This sits on top of the overall body tint.
@@ -1196,33 +1299,33 @@ geotab.addin.jackMaintenance = function () {
 
     // Default email recipients — shared fleet default (same setting the Custom tab uses).
     // Individual vehicles or a bulk apply can override this per vehicle.
-    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:12px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
+    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:9px 13px; margin-bottom:8px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
       '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Default email recipients</span>' +
       '<span id="oil-default-email" style="flex:1; min-width:180px; font-size:13px; color:'+C.ink+';">'+esc((globalSettings&&globalSettings.defaultEmailTo)||"(none set \u2014 using fleet address)")+'</span>' +
-      '<button id="oil-edit-default" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
+      '<button id="oil-edit-default" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
     '</div>';
 
     // Bulk "set for all shown vehicles" bar — interval + email.
     // "Shown" respects the top group picker, so with a group selected this IS that whole group.
     var selGroupName = selectedGroupId ? (groupNameMap()[selectedGroupId] || "this group") : null;
     var scopeNote = (oilFilter && oilFilter!=="all") ? "the filtered vehicles" : (selGroupName ? "all of "+selGroupName : "all tracked vehicles");
-    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:18px; box-shadow:'+C.shadow+';">' +
+    summary += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:9px 13px; margin-bottom:8px; box-shadow:'+C.shadow+';">' +
       '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
         '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; min-width:120px;">Set interval for all</span>' +
-        '<input id="oil-bulk-interval" type="number" min="500" step="500" value="'+DEFAULT_INTERVAL_MILES+'" style="width:110px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
+        '<input id="oil-bulk-interval" type="number" min="500" step="500" value="'+DEFAULT_INTERVAL_MILES+'" style="width:110px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
         '<span style="font-size:13px; color:'+C.soft+';">'+UNITS+'</span>' +
-        '<button id="oil-bulk-apply" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
+        '<button id="oil-bulk-apply" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 13px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
       '</div>' +
       '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; padding-top:12px; border-top:1px solid '+C.line+';">' +
         '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; min-width:120px;">Set email for all</span>' +
-        '<input id="oil-bulk-email" type="text" placeholder="name@company.com, comma-separated" style="flex:1; min-width:200px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
-        '<button id="oil-bulk-email-apply" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
+        '<input id="oil-bulk-email" type="text" placeholder="name@company.com, comma-separated" style="flex:1; min-width:200px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> ' +
+        '<button id="oil-bulk-email-apply" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 13px; font-size:13px; font-weight:600; cursor:pointer;">Apply to '+scopeNote+'</button>' +
       '</div>' +
       '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:8px;">Applies to '+scopeNote+' shown below. Leave the email blank and apply to clear per-vehicle recipients (those vehicles fall back to the default above).</div>' +
     '</div>';
 
     oilEl.innerHTML = summary;
-    if (counts.total===0) { oilEl.innerHTML += '<div style="text-align:center; color:'+C.soft+'; padding:40px 20px;">No vehicles with odometer data yet.</div>'; return; }
+    if (counts.total===0) { oilEl.innerHTML += '<div style="text-align:center; color:'+C.soft+'; padding:26px 18px;">No vehicles with odometer data yet.</div>'; return; }
 
     var visible = (oilFilter && oilFilter!=="all") ? items.filter(function (it){ return it.status===oilFilter; }) : items;
 
@@ -1315,7 +1418,7 @@ geotab.addin.jackMaintenance = function () {
           return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12.5px; color:'+C.soft+'; padding:5px 0; border-top:1px solid '+C.line+';">' +
             '<span>'+dt+' \u00b7 '+label+ol+srcBadge+'</span><span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span></div>';
         }).join("");
-        histHtml = '<div style="margin-top:14px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+        histHtml = '<div style="margin-top:11px; padding-top:10px; border-top:1px solid '+C.line+';">' +
           '<div data-histtoggle="'+esc(device.id)+'" style="display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;">' +
             '<span style="font-size:13px; color:'+C.faint+'; width:12px;">'+(isOpen?"\u25be":"\u25b8")+'</span>' +
             '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Service history</span>' +
@@ -1326,7 +1429,7 @@ geotab.addin.jackMaintenance = function () {
       }
 
       var card = document.createElement("div");
-      card.style.cssText = "background:"+C.card+"; border:1px solid "+C.line+"; border-radius:12px; padding:16px 18px; margin-bottom:12px; box-shadow:"+C.shadow+";";
+      card.style.cssText = "background:"+C.card+"; border:1px solid "+C.line+"; border-radius:12px; padding:12px 14px; margin-bottom:8px; box-shadow:"+C.shadow+";";
       var isCardOpen = !!expandedOil[device.id];
       card.innerHTML =
         '<div data-oiltoggle="'+esc(device.id)+'" style="display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none;">' +
@@ -1342,16 +1445,16 @@ geotab.addin.jackMaintenance = function () {
             '<div style="margin-top:7px; font-size:12px; color:'+C.soft+';">'+fmt(Math.max(0,since))+' / '+fmt(interval)+' '+UNITS+'</div>' +
             (predTxt && it.status!=="due" && it.status!=="off" ? '<div style="margin-top:6px; font-size:11.5px; color:'+C.soft+'; opacity:0.85;">\uD83D\uDCC5 Predicted: '+esc(predTxt)+' (based on last 30 days of mileage)</div>' : '') +
           '</div>' +
-          '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:15px; padding-top:14px; border-top:1px solid '+C.line+';">' +
-            '<span style="font-size:13px; color:'+C.soft+';">Interval <input type="number" min="500" step="500" value="'+interval+'" style="width:92px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> '+UNITS+'</span>' +
+          '<div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:11px; padding-top:10px; border-top:1px solid '+C.line+';">' +
+            '<span style="font-size:13px; color:'+C.soft+';">Interval <input type="number" min="500" step="500" value="'+interval+'" style="width:92px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"> '+UNITS+'</span>' +
             '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" '+(det.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> Reminders on</label>' +
-            '<button data-act="email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
+            '<button data-act="email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:6px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
             (det.emailTo
               ? '<span style="font-size:11.5px; color:'+C.soft+'; max-width:230px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="'+esc(det.emailTo)+'">\u2192 '+esc(det.emailTo)+'</span>'
               : '<span style="font-size:11.5px; color:'+C.faint+';">\u2192 using default</span>') +
             '<span style="flex:1;"></span>' +
-            '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
-            '<button data-act="save" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 15px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
+            '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 13px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
+            '<button data-act="save" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 13px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
           '</div>' +
           histHtml +
         '</div>';
@@ -1420,8 +1523,8 @@ geotab.addin.jackMaintenance = function () {
       var current = (globalSettings && globalSettings.defaultEmailTo) || "";
       var input = window.prompt("Default email recipients for the whole fleet (comma-separated). Individual vehicles can override this:", current);
       if (input === null) return;
-      var det = { settingsKey:"global", defaultEmailTo: input.trim() || null };
-      saveGlobalSettings(det).then(function () { globalSettings = det; toast("Default recipients saved"); renderOil(devices, odoMap, oilMap, sensorMap); });
+      var det = { defaultEmailTo: input.trim() || null };
+      patchSettings(det).then(function () { toast("Default recipients saved"); renderOil(devices, odoMap, oilMap, sensorMap); });
     });
 
     // wire bulk "set email for all" — applies to the currently visible vehicles (respects the group picker)
@@ -1482,10 +1585,13 @@ geotab.addin.jackMaintenance = function () {
   }
   function oilSumCard(num, label, fg, filterKey) {
     var active = oilFilter===filterKey;
-    var border = active ? "2px solid "+fg : "1px solid "+C.line;
-    return '<div data-oilfilter="'+filterKey+'" style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:12px 16px; flex:1; min-width:120px; box-shadow:'+C.shadow+'; cursor:pointer;">' +
-      '<div style="font-size:26px; font-weight:700; letter-spacing:-0.02em; color:'+fg+';">'+num+'</div>' +
-      '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+label+' \u203a</div></div>';
+    var border = "1px solid " + (active ? fg+"66" : C.line);
+    var shadow = active
+      ? "inset 0 0 0 1px "+fg+"3d, 0 0 22px -6px "+fg+"7a, 0 12px 30px -18px rgba(0,0,0,.95)"
+      : C.shadow;
+    return '<div data-oilfilter="'+filterKey+'" style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:10px 13px; flex:1; min-width:120px; box-shadow:'+shadow+'; cursor:pointer;">' +
+      '<div style="font-size:24px; font-weight:700; letter-spacing:-0.025em; line-height:1.1; color:'+fg+';">'+num+'</div>' +
+      '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px;">'+label+' \u203a</div></div>';
   }
   function persistOil(rec, det, device, oilMap) {
     var entity = { addInId:ADD_IN_ID, groups:[{id:"GroupCompanyId"}], details:det };
@@ -1514,6 +1620,22 @@ geotab.addin.jackMaintenance = function () {
     var odoByDevice = odoMap || {};
     var nameById = {}; devices.forEach(function (d){ nameById[d.id] = d.name; });
 
+    // How many reminders each asset already has, and which names are taken.
+    // Multiple reminders per asset are allowed (up to MAX_CUSTOM_PER_ASSET);
+    // duplicate names on the same asset are not, so a group re-add is safe to repeat.
+    var countByDevice = {}, labelsByDevice = {};
+    customList.forEach(function (r) {
+      var dd = r.details; if (!dd || !dd.deviceId) return;
+      countByDevice[dd.deviceId] = (countByDevice[dd.deviceId] || 0) + 1;
+      if (!labelsByDevice[dd.deviceId]) labelsByDevice[dd.deviceId] = {};
+      labelsByDevice[dd.deviceId][String(dd.label || "Reminder").trim().toLowerCase()] = true;
+    });
+    function slotsLeft(deviceId) { return MAX_CUSTOM_PER_ASSET - (countByDevice[deviceId] || 0); }
+    function hasLabel(deviceId, label) {
+      var m = labelsByDevice[deviceId]; if (!m) return false;
+      return !!m[String(label || "Reminder").trim().toLowerCase()];
+    }
+
     // ---- add form ----
     var deviceOpts = devices.map(function (d) {
       return '<option value="'+esc(d.id)+'">'+esc(d.name)+'</option>';
@@ -1530,24 +1652,28 @@ geotab.addin.jackMaintenance = function () {
     }).join("");
 
     var form =
-      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; margin-bottom:18px; box-shadow:'+C.shadow+';">' +
+      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 14px; margin-bottom:8px; box-shadow:'+C.shadow+';">' +
         '<div style="font-size:14px; font-weight:650; color:'+C.ink+'; margin-bottom:12px;">Add a custom reminder</div>' +
         '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">' +
-          '<label style="font-size:12px; color:'+C.soft+';">Apply to<br><select id="cr-mode" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="asset">A single asset</option><option value="group">A whole group</option></select></label>' +
-          '<label id="cr-asset-wrap" style="font-size:12px; color:'+C.soft+';">Asset<br><select id="cr-device" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;">'+deviceOpts+'</select></label>' +
-          '<label id="cr-group-wrap" style="display:none; font-size:12px; color:'+C.soft+';">Group<br><select id="cr-group" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:200px;">'+(groupOpts||'<option value="">No groups found</option>')+'</select></label>' +
-          '<label style="font-size:12px; color:'+C.soft+';">Reminder name<br><input id="cr-label" type="text" placeholder="e.g. Brake inspection" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;"></label>' +
-          '<label style="font-size:12px; color:'+C.soft+';">Type<br><select id="cr-type" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="mi">Every X miles</option><option value="days">Every X days</option></select></label>' +
-          '<label style="font-size:12px; color:'+C.soft+';">Interval<br><input id="cr-interval" type="number" min="1" value="5000" style="margin-top:4px; width:100px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"></label>' +
-          '<label style="font-size:12px; color:'+C.soft+';">Email to<br><input id="cr-email" type="text" placeholder="optional" style="margin-top:4px; padding:7px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:150px;"></label>' +
-          '<button id="cr-add" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer;">Add reminder</button>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Apply to<br><select id="cr-mode" style="margin-top:4px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="asset">A single asset</option><option value="group">A whole group</option></select></label>' +
+          '<label id="cr-asset-wrap" style="font-size:12px; color:'+C.soft+';">Asset<br><select id="cr-device" style="margin-top:4px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;">'+deviceOpts+'</select></label>' +
+          '<label id="cr-group-wrap" style="display:none; font-size:12px; color:'+C.soft+';">Group<br><select id="cr-group" style="margin-top:4px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:200px;">'+(groupOpts||'<option value="">No groups found</option>')+'</select></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Reminder name<br><input id="cr-label" type="text" placeholder="e.g. Brake inspection" style="margin-top:4px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:170px;"></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Type<br><select id="cr-type" style="margin-top:4px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"><option value="mi">Every X miles</option><option value="days">Every X days</option></select></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Interval<br><input id="cr-interval" type="number" min="1" value="5000" style="margin-top:4px; width:100px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';"></label>' +
+          '<label style="font-size:12px; color:'+C.soft+';">Email to<br><input id="cr-email" type="text" placeholder="optional" style="margin-top:4px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; min-width:150px;"></label>' +
+          '<button id="cr-add" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer;">Add reminder</button>' +
         '</div>' +
-        '<div id="cr-mode-note" style="font-size:11.5px; color:'+C.soft+'; margin-top:10px; display:none;">A separate reminder will be created for each vehicle in the group, each tracking its own mileage. Limit one custom reminder per asset — vehicles that already have one are skipped.</div>' +
+        '<div id="cr-asset-note" style="font-size:11.5px; color:'+C.soft+'; margin-top:10px;"></div>' +
+        '<div id="cr-mode-note" style="font-size:11.5px; color:'+C.soft+'; margin-top:6px; display:none;">A separate reminder will be created for each vehicle in the group, each tracking its own mileage. Up to '+MAX_CUSTOM_PER_ASSET+' custom reminders per asset — vehicles already at the limit, or that already have a reminder with this name, are skipped.</div>' +
       '</div>';
 
     // ---- existing reminders ----
     // Build a single reminder card's inner HTML (used standalone and inside batches)
-    function reminderCard(rec, insideBatch) {
+    // insideBatch = compact child card in a group batch (titled by vehicle).
+    // hideAsset  = card sits under a per-asset header, so the vehicle name is
+    //              already shown above and only the interval is repeated.
+    function reminderCard(rec, insideBatch, hideAsset) {
       var d = rec.details;
       var unit = d.type === "days" ? "days" : UNITS;
       var progress, remaining, pct;
@@ -1571,7 +1697,7 @@ geotab.addin.jackMaintenance = function () {
       var histHtml = "";
       var hist = (d.history||[]).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
       if (hist.length) {
-        histHtml = '<div style="margin-top:12px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+        histHtml = '<div style="margin-top:10px; padding-top:10px; border-top:1px solid '+C.line+';">' +
           '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:5px;">History</div>' +
           hist.map(function (e){
             var val = d.type==="days" ? (e.date?new Date(e.date).toLocaleDateString():"") : (e.odoMeters!=null?fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS:"—");
@@ -1583,24 +1709,31 @@ geotab.addin.jackMaintenance = function () {
             return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:'+C.soft+'; padding:3px 0;"><span>'+dt+' \u00b7 '+esc(d.label||"Reminder")+badge+'</span><span style="color:'+C.ink+';">'+val+'</span></div>';
           }).join("") + '</div>';
       }
-      var margin = insideBatch ? "margin:10px 0 0;" : "margin-bottom:12px;";
-      var titleLine = insideBatch
-        ? '<div><span style="font-size:14px; font-weight:600; color:'+C.ink+';">'+esc(d.deviceName||nameById[d.deviceId]||"")+'</span>' +
-          '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">every '+fmt(d.interval)+' '+unit+'</div></div>'
-        : '<div><span style="font-size:15px; font-weight:650; color:'+C.ink+';">'+esc(d.label||"Reminder")+'</span>' +
+      var margin = insideBatch ? "margin:8px 0 0;" : "margin-bottom:8px;";
+      var titleLine;
+      if (insideBatch) {
+        titleLine = '<div><span style="font-size:14px; font-weight:600; color:'+C.ink+';">'+esc(d.deviceName||nameById[d.deviceId]||"")+'</span>' +
+          '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">every '+fmt(d.interval)+' '+unit+'</div></div>';
+      } else if (hideAsset) {
+        // vehicle name already shown in the section header above this card
+        titleLine = '<div><span style="font-size:14.5px; font-weight:650; color:'+C.ink+';">'+esc(d.label||"Reminder")+'</span>' +
+          '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">every '+fmt(d.interval)+' '+unit+'</div></div>';
+      } else {
+        titleLine = '<div><span style="font-size:15px; font-weight:650; color:'+C.ink+';">'+esc(d.label||"Reminder")+'</span>' +
           '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+esc(d.deviceName||nameById[d.deviceId]||"")+' \u00b7 every '+fmt(d.interval)+' '+unit+'</div></div>';
+      }
 
-      return '<div data-crid="'+esc(rec.id)+'" style="background:'+(insideBatch?C.card2:C.card)+'; border:1px solid '+C.line+'; border-radius:12px; padding:14px 16px; '+margin+' '+(insideBatch?'':'box-shadow:'+C.shadow+';')+'">' +
+      return '<div data-crid="'+esc(rec.id)+'" style="background:'+(insideBatch?C.card2:C.card)+'; border:1px solid '+C.line+'; border-radius:12px; padding:11px 13px; '+margin+' '+(insideBatch?'':'box-shadow:'+C.shadow+';')+'">' +
         '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px;">' +
           titleLine + pillHtml +
         '</div>' +
         '<div style="height:8px; background:'+C.track+'; border-radius:999px; overflow:hidden;"><div style="height:100%; width:'+pct+'%; border-radius:999px; background:'+fill+';"></div></div>' +
-        '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+        '<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:11px; padding-top:10px; border-top:1px solid '+C.line+';">' +
           '<label style="display:flex; align-items:center; gap:7px; font-size:13px; color:'+C.soft+'; cursor:pointer;"><input type="checkbox" data-cr="enabled" '+(d.enabled!==false?"checked":"")+' style="width:15px; height:15px;"> On</label>' +
-          '<button data-cr="edit-email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
+          '<button data-cr="edit-email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:6px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Email\u2026</button>' +
           '<span style="flex:1;"></span>' +
-          '<button data-cr="complete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Mark done</button>' +
-          '<button data-cr="delete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Delete</button>' +
+          '<button data-cr="complete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer;">Mark done</button>' +
+          '<button data-cr="delete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer;">Delete</button>' +
         '</div>' +
         histHtml +
       '</div>';
@@ -1608,7 +1741,7 @@ geotab.addin.jackMaintenance = function () {
 
     var listHtml = "";
     if (!customList.length) {
-      listHtml = '<div style="text-align:center; color:'+C.soft+'; padding:30px 20px;">No custom reminders yet. Add one above.</div>';
+      listHtml = '<div style="text-align:center; color:'+C.soft+'; padding:22px 18px;">No custom reminders yet. Add one above.</div>';
     } else {
       // separate batch reminders from standalone ones
       var batches = {}, standalone = [];
@@ -1639,18 +1772,18 @@ geotab.addin.jackMaintenance = function () {
 
         var inner = "";
         if (isOpen) {
-          inner = '<div style="margin-top:12px; padding-top:12px; border-top:1px solid '+C.line+';">' +
+          inner = '<div style="margin-top:10px; padding-top:10px; border-top:1px solid '+C.line+';">' +
             '<div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">' +
               '<span style="font-size:12px; color:'+C.soft+';">Set interval for all:</span>' +
               '<input data-batchinterval="'+esc(bId)+'" type="number" min="1" value="'+d0.interval+'" style="width:100px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card+'; color:'+C.ink+';"> '+unit +
-              '<button data-batchsave="'+esc(bId)+'" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Apply to all '+recs.length+'</button>' +
-              '<button data-batchdelete="'+esc(bId)+'" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Delete all</button>' +
+              '<button data-batchsave="'+esc(bId)+'" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Apply to all '+recs.length+'</button>' +
+              '<button data-batchdelete="'+esc(bId)+'" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Delete all</button>' +
             '</div>' +
             recs.map(function (r){ return reminderCard(r, true); }).join("") +
           '</div>';
         }
 
-        listHtml += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:16px 18px; margin-bottom:12px; box-shadow:'+C.shadow+';">' +
+        listHtml += '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 14px; margin-bottom:8px; box-shadow:'+C.shadow+';">' +
           '<div data-batchtoggle="'+esc(bId)+'" style="display:flex; align-items:center; gap:12px; cursor:pointer; user-select:none;">' +
             '<span style="font-size:14px; color:'+C.faint+'; width:12px;">'+(isOpen?"\u25be":"\u25b8")+'</span>' +
             '<div style="flex:1;"><span style="font-size:15px; font-weight:650; color:'+C.ink+';">'+esc(d0.label||"Reminder")+'</span>' +
@@ -1660,15 +1793,39 @@ geotab.addin.jackMaintenance = function () {
         '</div>';
       });
 
-      // standalone reminders as normal cards
-      standalone.forEach(function (rec){ listHtml += reminderCard(rec, false); });
+      // standalone reminders as normal cards — cluster by asset so a vehicle's
+      // multiple reminders sit together, then alphabetical by reminder name
+      standalone.sort(function (a, b) {
+        var an = (a.details.deviceName || nameById[a.details.deviceId] || "").toLowerCase();
+        var bn = (b.details.deviceName || nameById[b.details.deviceId] || "").toLowerCase();
+        if (an !== bn) return an < bn ? -1 : 1;
+        var al = String(a.details.label || "").toLowerCase(), bl = String(b.details.label || "").toLowerCase();
+        return al < bl ? -1 : al > bl ? 1 : 0;
+      });
+      // With up to MAX_CUSTOM_PER_ASSET reminders per vehicle, repeat the asset
+      // name once as a header instead of on every card.
+      var lastDevice = null;
+      standalone.forEach(function (rec) {
+        var did = rec.details.deviceId;
+        if (did !== lastDevice) {
+          lastDevice = did;
+          var used = countByDevice[did] || 0;
+          listHtml +=
+            '<div style="display:flex; align-items:center; gap:9px; margin:14px 3px 7px;">' +
+              '<span style="font-size:12.5px; font-weight:700; letter-spacing:.01em; color:'+C.ink+';">'+esc(rec.details.deviceName || nameById[did] || "Unknown asset")+'</span>' +
+              '<span style="flex:1; height:1px; background:linear-gradient(90deg,'+C.line+',rgba(0,0,0,0));"></span>' +
+              '<span style="font-size:10.5px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:'+(used>=MAX_CUSTOM_PER_ASSET?C.amber:C.faint)+';">'+used+' / '+MAX_CUSTOM_PER_ASSET+'</span>' +
+            '</div>';
+        }
+        listHtml += reminderCard(rec, false, true);
+      });
     }
 
     var settingsBar =
-      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 16px; margin-bottom:18px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
+      '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:9px 13px; margin-bottom:8px; box-shadow:'+C.shadow+'; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">' +
         '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Default email recipients</span>' +
         '<span id="cr-default-email" style="flex:1; min-width:180px; font-size:13px; color:'+C.ink+';">'+esc((globalSettings&&globalSettings.defaultEmailTo)||"(none set — using fleet address)")+'</span>' +
-        '<button id="cr-edit-default" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
+        '<button id="cr-edit-default" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
       '</div>';
 
     customEl.innerHTML = form + settingsBar + '<div id="cr-list">' + listHtml + '</div>';
@@ -1679,19 +1836,35 @@ geotab.addin.jackMaintenance = function () {
       var current = (globalSettings && globalSettings.defaultEmailTo) || "";
       var input = window.prompt("Default email recipients for ALL reminders (comma-separated). Individual reminders can override this:", current);
       if (input === null) return;
-      var det = { settingsKey:"global", defaultEmailTo: input.trim() || null };
-      saveGlobalSettings(det).then(function () { globalSettings = det; toast("Default recipients saved"); renderCustom(devices, odoMap, customList); });
+      var det = { defaultEmailTo: input.trim() || null };
+      patchSettings(det).then(function () { toast("Default recipients saved"); renderCustom(devices, odoMap, customList); });
     });
 
-    // wire mode toggle (asset vs group)
+    // wire mode toggle (asset vs group) + per-asset slot counter
     var modeSel = $("cr-mode");
+    function refreshAssetNote() {
+      var note = $("cr-asset-note"), sel = $("cr-device");
+      if (!note) return;
+      if (!modeSel || modeSel.value === "group" || !sel || !sel.value) { note.style.display = "none"; return; }
+      var used = countByDevice[sel.value] || 0;
+      var left = MAX_CUSTOM_PER_ASSET - used;
+      note.style.display = "";
+      note.style.color = left <= 0 ? C.red : C.soft;
+      note.textContent = left <= 0
+        ? (nameById[sel.value]||"This asset")+" is at the "+MAX_CUSTOM_PER_ASSET+"-reminder limit — delete one to add another."
+        : used+" of "+MAX_CUSTOM_PER_ASSET+" reminders used on this asset \u00b7 "+left+" slot"+(left===1?"":"s")+" left";
+    }
     if (modeSel) modeSel.addEventListener("change", function () {
       var isGroup = modeSel.value === "group";
       var aw = $("cr-asset-wrap"), gw = $("cr-group-wrap"), note = $("cr-mode-note");
       if (aw) aw.style.display = isGroup ? "none" : "";
       if (gw) gw.style.display = isGroup ? "" : "none";
       if (note) note.style.display = isGroup ? "" : "none";
+      refreshAssetNote();
     });
+    var devSel = $("cr-device");
+    if (devSel) devSel.addEventListener("change", refreshAssetNote);
+    refreshAssetNote();
 
     // wire add form
     var addBtn = $("cr-add");
@@ -1714,34 +1887,40 @@ geotab.addin.jackMaintenance = function () {
         };
       }
 
-      // One custom reminder per asset: build a set of devices that already have one
-      var hasReminder = {};
-      (customList || []).forEach(function (r) {
-        if (r.details && r.details.deviceId) hasReminder[r.details.deviceId] = true;
-      });
-
       if (mode === "group") {
         var groupId = $("cr-group").value;
         if (!groupId) { toast("Pick a group"); return; }
         var allowed = groupWithDescendants(groupId);
         var inGroup = devices.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); });
         if (!inGroup.length) { toast("No vehicles in that group"); return; }
-        // skip assets that already have a custom reminder (one-per-asset cap)
-        var targets = inGroup.filter(function (dev){ return !hasReminder[dev.id]; });
-        var skipped = inGroup.length - targets.length;
-        if (!targets.length) { toast("All "+inGroup.length+" vehicles already have a custom reminder (limit 1 each)"); return; }
+        // skip assets at the per-asset cap, or that already use this reminder name
+        var atCap = 0, dupName = 0;
+        var targets = inGroup.filter(function (dev) {
+          if (hasLabel(dev.id, label)) { dupName++; return false; }
+          if (slotsLeft(dev.id) <= 0) { atCap++; return false; }
+          return true;
+        });
+        if (!targets.length) {
+          if (dupName && !atCap) toast('All '+inGroup.length+' vehicles already have a "'+label+'" reminder');
+          else toast("No eligible vehicles — "+atCap+" at the "+MAX_CUSTOM_PER_ASSET+"-reminder limit, "+dupName+" already using that name");
+          return;
+        }
         var batchId = "batch_" + Date.now() + "_" + Math.floor(Math.random()*100000);
         var gName = (groupNameMap()[groupId] || "Group");
         Promise.all(targets.map(function (dev){ return persistCustom({ id:null, details:makeDet(dev.id, batchId, gName) }); }))
           .then(function () {
             var msg = '"'+label+'" added to '+targets.length+' vehicle'+(targets.length===1?'':'s');
-            if (skipped>0) msg += " ("+skipped+" skipped — already had one)";
+            var notes = [];
+            if (dupName>0) notes.push(dupName+" already had it");
+            if (atCap>0) notes.push(atCap+" at the "+MAX_CUSTOM_PER_ASSET+"-reminder limit");
+            if (notes.length) msg += " ("+notes.join(", ")+")";
             toast(msg); reloadAll();
           });
       } else {
         var deviceId = $("cr-device").value;
         if (!deviceId) { toast("Pick an asset"); return; }
-        if (hasReminder[deviceId]) { toast((nameById[deviceId]||"That asset")+" already has a custom reminder (limit 1 per asset)"); return; }
+        if (hasLabel(deviceId, label)) { toast((nameById[deviceId]||"That asset")+' already has a "'+label+'" reminder — use a different name'); return; }
+        if (slotsLeft(deviceId) <= 0) { toast((nameById[deviceId]||"That asset")+" is at the "+MAX_CUSTOM_PER_ASSET+"-reminder limit — delete one first"); return; }
         persistCustom({ id:null, details:makeDet(deviceId, null, null) }).then(function () { toast('"'+label+'" added'); reloadAll(); });
       }
     });
@@ -1761,11 +1940,18 @@ geotab.addin.jackMaintenance = function () {
         var d = rec.details;
         if (!d.history) d.history = [];
         var odo = odoByDevice[d.deviceId];
-        d.history.push({ date: new Date().toISOString(), odoMeters: d.type==="mi" ? odo : null, source: "manual" });
+        var nowIso = new Date().toISOString();
+        d.history.push({ date: nowIso, odoMeters: d.type==="mi" ? odo : null, source: "manual" });
         if (d.type==="mi") d.baselineMeters = odo!=null ? odo : d.baselineMeters;
-        d.baselineDate = new Date().toISOString();
+        d.baselineDate = nowIso;
+        // Flag consumed by check-oil-reminders.js on its next run — it sends the
+        // completion confirmation and clears these three fields.
         d.emailPending = true;
-        persistCustom(rec).then(function () { toast(d.label+" marked done"); reloadAll(); });
+        d.emailPendingReason = "completed";
+        d.emailPendingOdoMeters = (d.type==="mi" && odo!=null) ? odo : null;
+        d.emailPendingDate = nowIso;
+        d.deviceName = d.deviceName || nameById[d.deviceId] || "";
+        persistCustom(rec).then(function () { toast(d.label+" marked done — confirmation queued"); reloadAll(); });
       });
       if (deleteBtn) deleteBtn.addEventListener("click", function () {
         deleteCustom(rec).then(function () { toast("Reminder deleted"); reloadAll(); });
@@ -1810,44 +1996,457 @@ geotab.addin.jackMaintenance = function () {
   }
   function cssIdSel(s) { return String(s).replace(/["\\]/g,"\\$&"); }
 
+  // ---- REPORTING tab ---------------------------------------------------
+  // Mirrors the row logic in check-oil-reminders.js so the CSV you download
+  // here matches the spreadsheet that gets emailed on schedule.
+  function buildReportRows(devices) {
+    var customByDevice = {};
+    (cache.customList || []).forEach(function (r) {
+      var d = r.details;
+      if (!d || !d.deviceId || d.settingsKey === "global" || d.enabled === false) return;
+      var due = false, soon = false;
+      if (d.type === "days") {
+        var st = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
+        var elapsed = (Date.now() - st) / 86400000;
+        if (elapsed >= d.interval) due = true; else if (elapsed >= d.interval*0.85) soon = true;
+      } else {
+        var o = cache.odoMap[d.deviceId];
+        if (o != null && d.baselineMeters != null) {
+          var since = (o - d.baselineMeters)/METERS_PER_UNIT;
+          if (since >= d.interval) due = true; else if (since >= d.interval*0.85) soon = true;
+        }
+      }
+      if (!customByDevice[d.deviceId]) customByDevice[d.deviceId] = { due:0, soon:0 };
+      if (due) customByDevice[d.deviceId].due++;
+      else if (soon) customByDevice[d.deviceId].soon++;
+    });
+
+    return devices.map(function (device) {
+      var odoMeters = cache.odoMap[device.id];
+      var rec = cache.oilMap[device.id];
+      var det = rec && rec.details;
+      var status, remaining = null;
+
+      if (odoMeters == null) {
+        status = "No odometer data";
+      } else if (!det) {
+        status = "On track";
+        remaining = DEFAULT_INTERVAL_MILES;
+      } else if (det.enabled === false) {
+        status = "Reminders off";
+      } else {
+        var interval = det.intervalMiles || DEFAULT_INTERVAL_MILES;
+        var since = (odoMeters - det.lastNotifiedMeters)/METERS_PER_UNIT;
+        remaining = interval - since;
+        if (remaining <= 0) status = (globalSettings.autoResetOil === false) ? "Overdue \u2014 awaiting confirmation" : "Due now";
+        else if (remaining <= 500) status = "Due soon";
+        else status = "On track";
+      }
+
+      var c = customByDevice[device.id];
+      if (c) {
+        var extras = [];
+        if (c.due) extras.push(c.due+" custom due");
+        if (c.soon) extras.push(c.soon+" custom due soon");
+        if (extras.length) {
+          if (status === "On track" && c.due) status = "Due now ("+extras.join(", ")+")";
+          else status = status+" ("+extras.join(", ")+")";
+        }
+      }
+
+      return {
+        deviceId: device.id,
+        name: device.name,
+        status: status,
+        remaining: remaining == null ? null : Math.round(remaining),
+        odo: odoMeters == null ? null : Math.round(odoMeters/METERS_PER_UNIT)
+      };
+    }).sort(function (a,b){ return String(a.name).localeCompare(String(b.name), undefined, {numeric:true}); });
+  }
+
+  // Which assets the report covers, per the current draft selection.
+  function selectedReportDevices(allDevices, r) {
+    if (!r || r.assetMode === "all") return allDevices;
+    if (r.assetMode === "assets") {
+      var want = {}; (r.deviceIds||[]).forEach(function (id){ want[id]=true; });
+      return allDevices.filter(function (d){ return want[d.id]; });
+    }
+    if (r.assetMode === "groups") {
+      var wantG = {}; (r.groupIds||[]).forEach(function (id){ wantG[id]=true; });
+      return allDevices.filter(function (d){ return (deviceGroups[d.id]||[]).some(function (gid){ return wantG[gid]; }); });
+    }
+    return allDevices;
+  }
+
+  function panel(title, note, inner) {
+    return '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:'+C.shadow+';">' +
+      '<div style="font-size:13.5px; font-weight:650; color:'+C.ink+';">'+title+'</div>' +
+      (note ? '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:3px; line-height:1.45;">'+note+'</div>' : '') +
+      '<div style="margin-top:11px;">'+inner+'</div>' +
+    '</div>';
+  }
+  function fieldLabel(t) {
+    return '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:'+C.soft+'; margin-bottom:4px;">'+t+'</div>';
+  }
+  var inputCss = 'padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';';
+  function toggleRow(id, on, title, desc) {
+    return '<label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:9px 0;">' +
+      '<input type="checkbox" id="'+id+'" '+(on?"checked":"")+' style="width:16px; height:16px; margin-top:1px; flex:none;">' +
+      '<span><span style="font-size:13px; font-weight:600; color:'+C.ink+';">'+title+'</span>' +
+      '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px; line-height:1.5;">'+desc+'</div></span></label>';
+  }
+
+  function renderReport(devices) {
+    if (!reportEl) return;
+    if (!reportDraft) reportDraft = JSON.parse(JSON.stringify(globalSettings.report || DEFAULT_REPORT));
+    var r = reportDraft;
+    var all = cache.allDevices || devices || [];
+    var names = groupNameMap();
+
+    var DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    var TZS = ["America/New_York","America/Chicago","America/Denver","America/Phoenix","America/Los_Angeles","America/Anchorage","Pacific/Honolulu","UTC"];
+    if (TZS.indexOf(r.timezone) < 0 && r.timezone) TZS.unshift(r.timezone);
+
+    // ---- schedule panel ----
+    var schedule =
+      toggleRow("rp-enabled", r.enabled, "Email this report automatically",
+        "When off, nothing is sent on a schedule \u2014 you can still download or send a test below.") +
+      '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">' +
+        '<label>'+fieldLabel("Frequency")+'<select id="rp-freq" style="'+inputCss+'">' +
+          '<option value="daily"'+(r.frequency==="daily"?" selected":"")+'>Daily</option>' +
+          '<option value="weekly"'+(r.frequency==="weekly"?" selected":"")+'>Weekly</option>' +
+        '</select></label>' +
+        '<label id="rp-dow-wrap" style="'+(r.frequency==="weekly"?"":"display:none;")+'">'+fieldLabel("Day")+'<select id="rp-dow" style="'+inputCss+'">' +
+          DAYS.map(function (d,i){ return '<option value="'+i+'"'+(Number(r.dayOfWeek)===i?" selected":"")+'>'+d+'</option>'; }).join("") +
+        '</select></label>' +
+        '<label>'+fieldLabel("Time")+'<input id="rp-time" type="time" value="'+esc(r.time||"07:00")+'" style="'+inputCss+'"></label>' +
+        '<label>'+fieldLabel("Time zone")+'<select id="rp-tz" style="'+inputCss+'">' +
+          TZS.map(function (t){ return '<option value="'+esc(t)+'"'+(r.timezone===t?" selected":"")+'>'+esc(t)+'</option>'; }).join("") +
+        '</select></label>' +
+        '<label style="flex:1; min-width:220px;">'+fieldLabel("Send to")+'<input id="rp-to" type="text" value="'+esc(r.recipients||"")+'" placeholder="comma-separated; blank uses the fleet default" style="'+inputCss+' width:100%;"></label>' +
+      '</div>' +
+      (r.lastSentAt ? '<div style="font-size:11px; color:'+C.faint+'; margin-top:9px;">Last sent '+new Date(r.lastSentAt).toLocaleString()+'</div>' : '');
+
+    // ---- asset selection panel ----
+    var selected = selectedReportDevices(all, r);
+    var selIds = {}; selected.forEach(function (d){ selIds[d.id]=true; });
+
+    var modeRow =
+      '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">' +
+        '<label>'+fieldLabel("Include")+'<select id="rp-mode" style="'+inputCss+'">' +
+          '<option value="all"'+(r.assetMode==="all"?" selected":"")+'>Entire fleet</option>' +
+          '<option value="groups"'+(r.assetMode==="groups"?" selected":"")+'>Selected groups</option>' +
+          '<option value="assets"'+(r.assetMode==="assets"?" selected":"")+'>Selected assets</option>' +
+        '</select></label>' +
+        '<div style="flex:1;"></div>' +
+        '<span style="font-size:12px; color:'+(selected.length?C.green:C.red)+'; font-weight:600;">'+selected.length+' of '+all.length+' asset'+(all.length===1?"":"s")+' included</span>' +
+      '</div>';
+
+    var picker = "";
+    if (r.assetMode === "groups") {
+      var gsel = {}; (r.groupIds||[]).forEach(function (id){ gsel[id]=true; });
+      var groupRows = allGroups.filter(function (g){ return names[g.id] && !isExcludedGroupName(names[g.id]); })
+        .map(function (g) {
+          var allowed = groupWithDescendants(g.id);
+          var count = all.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); }).length;
+          return '<label style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px; cursor:pointer; background:'+(gsel[g.id]?C.brandSoft:"transparent")+';">' +
+            '<input type="checkbox" data-rpgroup="'+esc(g.id)+'" '+(gsel[g.id]?"checked":"")+' style="width:15px;height:15px;">' +
+            '<span style="font-size:13px; color:'+C.ink+';">'+esc(names[g.id])+'</span>' +
+            '<span style="flex:1;"></span>' +
+            '<span style="font-size:11.5px; color:'+C.faint+';">'+count+' vehicle'+(count===1?"":"s")+'</span></label>';
+        }).join("");
+      picker = '<div style="margin-top:11px; max-height:280px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
+        (groupRows || '<div style="padding:12px; color:'+C.soft+'; font-size:12.5px;">No groups found.</div>') + '</div>';
+    } else if (r.assetMode === "assets") {
+      var dsel = {}; (r.deviceIds||[]).forEach(function (id){ dsel[id]=true; });
+      var ft = assetFilterText.toLowerCase();
+      var shown = all.filter(function (d){ return !ft || String(d.name||"").toLowerCase().indexOf(ft) >= 0; });
+      var assetRows = shown.map(function (d) {
+        var g = devicePrimaryGroup(d.id);
+        return '<label style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px; cursor:pointer; background:'+(dsel[d.id]?C.brandSoft:"transparent")+';">' +
+          '<input type="checkbox" data-rpasset="'+esc(d.id)+'" '+(dsel[d.id]?"checked":"")+' style="width:15px;height:15px;">' +
+          '<span style="font-size:13px; color:'+C.ink+';">'+esc(d.name)+'</span>' +
+          '<span style="flex:1;"></span>' +
+          '<span style="font-size:11.5px; color:'+C.faint+';">'+esc(g.name||"")+'</span></label>';
+      }).join("");
+      picker =
+        '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:11px;">' +
+          '<input id="rp-search" type="text" value="'+esc(assetFilterText)+'" placeholder="Filter assets\u2026" style="'+inputCss+' flex:1; min-width:170px;">' +
+          '<button id="rp-all" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Select all'+(ft?" shown":"")+'</button>' +
+          '<button id="rp-none" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Clear</button>' +
+          '<select id="rp-addgroup" style="'+inputCss+'"><option value="">+ Add a whole group\u2026</option>' +
+            allGroups.filter(function (g){ return names[g.id] && !isExcludedGroupName(names[g.id]); })
+              .map(function (g){ return '<option value="'+esc(g.id)+'">'+esc(names[g.id])+'</option>'; }).join("") +
+          '</select>' +
+        '</div>' +
+        '<div style="margin-top:9px; max-height:300px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
+          (assetRows || '<div style="padding:12px; color:'+C.soft+'; font-size:12.5px;">No assets match that filter.</div>') + '</div>';
+    }
+
+    // ---- preview panel ----
+    var rows = buildReportRows(selected);
+    var previewRows = rows.slice(0, 6).map(function (x) {
+      return '<tr>' +
+        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.ink+';">'+esc(x.name)+'</td>' +
+        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.soft+';">'+esc(x.status)+'</td>' +
+        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.soft+'; text-align:right;">'+(x.remaining==null?"\u2014":fmt(x.remaining))+'</td>' +
+        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.soft+'; text-align:right;">'+(x.odo==null?"\u2014":fmt(x.odo))+'</td>' +
+      '</tr>';
+    }).join("");
+    var th = 'padding:5px 9px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:'+C.faint+'; text-align:left;';
+    var preview =
+      '<div style="overflow:auto; border:1px solid '+C.line+'; border-radius:9px; background:'+C.card2+';">' +
+      '<table style="width:100%; border-collapse:collapse; font-size:12.5px;"><thead><tr>' +
+        '<th style="'+th+'">Asset</th><th style="'+th+'">Status</th>' +
+        '<th style="'+th+' text-align:right;">Mi. remaining</th><th style="'+th+' text-align:right;">Odometer</th>' +
+      '</tr></thead><tbody>'+(previewRows || '<tr><td colspan="4" style="padding:12px; color:'+C.soft+';">No assets selected.</td></tr>')+'</tbody></table></div>' +
+      (rows.length > 6 ? '<div style="font-size:11px; color:'+C.faint+'; margin-top:7px;">Showing 6 of '+rows.length+' rows.</div>' : '') +
+      '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">' +
+        '<button id="rp-save" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:650; cursor:pointer;">Save schedule</button>' +
+        '<button id="rp-csv" style="border:1px solid '+C.line+'; background:transparent; color:'+C.ink+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Download CSV now</button>' +
+        '<button id="rp-test" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Send test on next run</button>' +
+      '</div>';
+
+    reportEl.innerHTML =
+      panel("Schedule",
+        "The Excel file is built and emailed by the automation script. It fires on the first scheduled run at or after this time, and only once per period \u2014 so the report can never double-send even if the job runs hourly.",
+        schedule) +
+      panel("Assets in the report", "Pick the whole fleet, one or more groups, or individual assets.", modeRow + picker) +
+      panel("Columns &amp; preview", "Asset \u00b7 Status \u00b7 Mileage remaining before oil change \u00b7 Odometer reading. This preview uses the data currently loaded in the Add-In.", preview);
+
+    // ---- wiring ----
+    function bindVal(id, key, transform) {
+      var el = $(id); if (!el) return;
+      el.addEventListener("change", function () {
+        r[key] = transform ? transform(el.value) : el.value;
+        renderReport(devices);
+      });
+    }
+    var en = $("rp-enabled");
+    if (en) en.addEventListener("change", function () { r.enabled = en.checked; renderReport(devices); });
+    bindVal("rp-freq", "frequency");
+    bindVal("rp-dow", "dayOfWeek", Number);
+    bindVal("rp-tz", "timezone");
+    var tm = $("rp-time"); if (tm) tm.addEventListener("change", function () { r.time = tm.value || "07:00"; });
+    var to = $("rp-to"); if (to) to.addEventListener("change", function () { r.recipients = to.value.trim(); });
+    bindVal("rp-mode", "assetMode");
+
+    reportEl.querySelectorAll("[data-rpgroup]").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        var id = cb.getAttribute("data-rpgroup");
+        var set = (r.groupIds||[]).filter(function (x){ return x !== id; });
+        if (cb.checked) set.push(id);
+        r.groupIds = set; renderReport(devices);
+      });
+    });
+    reportEl.querySelectorAll("[data-rpasset]").forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        var id = cb.getAttribute("data-rpasset");
+        var set = (r.deviceIds||[]).filter(function (x){ return x !== id; });
+        if (cb.checked) set.push(id);
+        r.deviceIds = set; renderReport(devices);
+      });
+    });
+    var search = $("rp-search");
+    if (search) {
+      search.addEventListener("input", function () {
+        assetFilterText = search.value;
+        renderReport(devices);
+        var s2 = $("rp-search");
+        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); }
+      });
+    }
+    var selAll = $("rp-all");
+    if (selAll) selAll.addEventListener("click", function () {
+      var ft2 = assetFilterText.toLowerCase();
+      var ids = all.filter(function (d){ return !ft2 || String(d.name||"").toLowerCase().indexOf(ft2) >= 0; }).map(function (d){ return d.id; });
+      var merged = (r.deviceIds||[]).slice();
+      ids.forEach(function (id){ if (merged.indexOf(id) < 0) merged.push(id); });
+      r.deviceIds = merged; renderReport(devices);
+    });
+    var selNone = $("rp-none");
+    if (selNone) selNone.addEventListener("click", function () { r.deviceIds = []; renderReport(devices); });
+    var addGroup = $("rp-addgroup");
+    if (addGroup) addGroup.addEventListener("change", function () {
+      var gid = addGroup.value; if (!gid) return;
+      var allowed = groupWithDescendants(gid);
+      var ids = all.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (x){ return allowed[x]; }); }).map(function (d){ return d.id; });
+      var merged = (r.deviceIds||[]).slice();
+      var added = 0;
+      ids.forEach(function (id){ if (merged.indexOf(id) < 0) { merged.push(id); added++; } });
+      r.deviceIds = merged;
+      toast("Added "+added+" asset"+(added===1?"":"s")+" from "+(names[gid]||"group"));
+      renderReport(devices);
+    });
+
+    var save = $("rp-save");
+    if (save) save.addEventListener("click", function () {
+      // Pull straight from the inputs — if the user typed and clicked Save
+      // without the field ever firing 'change', the draft could be stale.
+      var tEl = $("rp-time"), toEl = $("rp-to");
+      if (tEl && tEl.value) r.time = tEl.value;
+      if (toEl) r.recipients = toEl.value.trim();
+      if (r.enabled && !(r.recipients||"").trim() && !(globalSettings.defaultEmailTo||"").trim()) {
+        toast("Set report recipients, or a fleet default in Settings, before enabling"); return;
+      }
+      if (r.enabled && !selectedReportDevices(all, r).length) { toast("No assets selected for the report"); return; }
+      patchSettings({ report: JSON.parse(JSON.stringify(r)) })
+        .then(function () { toast(r.enabled ? "Report schedule saved" : "Report schedule saved (disabled)"); })
+        .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
+    });
+
+    var csv = $("rp-csv");
+    if (csv) csv.addEventListener("click", function () {
+      var out = rows;
+      if (!out.length) { toast("No assets selected"); return; }
+      var head = ["Asset","Status","Mileage remaining before oil change ("+UNITS+")","Odometer reading ("+UNITS+")"];
+      function q(v){ v = (v==null?"":String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+      var lines = [head.map(q).join(",")].concat(out.map(function (x) {
+        return [q(x.name), q(x.status), q(x.remaining==null?"":x.remaining), q(x.odo==null?"":x.odo)].join(",");
+      }));
+      // \ufeff so Excel opens it as UTF-8 rather than mangling the em dashes
+      var blob = new Blob(["\ufeff"+lines.join("\r\n")], { type:"text/csv;charset=utf-8;" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "fleet-maintenance-"+new Date().toISOString().slice(0,10)+".csv";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function (){ URL.revokeObjectURL(url); }, 2000);
+      toast("Downloaded "+out.length+" rows");
+    });
+
+    var test = $("rp-test");
+    if (test) test.addEventListener("click", function () {
+      var draft = JSON.parse(JSON.stringify(r));
+      draft.testPending = true;
+      patchSettings({ report: draft }).then(function () {
+        reportDraft = draft;
+        toast("Test queued \u2014 the next automation run will email the spreadsheet");
+      }).catch(function (e){ toast("Failed: "+(e&&e.message?e.message:e)); });
+    });
+  }
+
+  // ---- SETTINGS tab ----------------------------------------------------
+  function renderSettings(devices) {
+    if (!settingsEl) return;
+    var autoOil = globalSettings.autoResetOil !== false;
+    var autoCustom = globalSettings.autoResetCustom !== false;
+    var anyManual = !autoOil || !autoCustom;
+
+    var banner = anyManual
+      ? '<div style="background:'+C.amberBg+'; border:1px solid '+C.amber+'55; border-radius:10px; padding:10px 13px; margin-bottom:10px; box-shadow:0 0 20px -8px '+C.amber+'99;">' +
+          '<span style="font-size:12.5px; font-weight:650; color:'+C.amber+';">Manual confirmation mode is on</span>' +
+          '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:3px; line-height:1.5;">Affected reminders will stay overdue until someone marks them serviced or done in the Add-In. You get one email per item when it first comes due, not one per run.</div>' +
+        '</div>'
+      : "";
+
+    var autoPanel =
+      toggleRow("st-oil", autoOil, "Auto-reset oil change reminders",
+        "On: when a vehicle passes its interval the counter rolls forward automatically and tracking continues.<br>" +
+        "Off: the counter stays put and the vehicle keeps reading as overdue until someone clicks <b>Mark serviced now</b> on the Oil Reminders tab.") +
+      '<div style="height:1px; background:'+C.line+';"></div>' +
+      toggleRow("st-custom", autoCustom, "Auto-reset custom reminders",
+        "On: a due custom reminder resets itself and starts the next cycle.<br>" +
+        "Off: it stays due until someone clicks <b>Mark done</b> on the Custom Reminders tab.");
+
+    var emailPanel =
+      '<div style="display:flex; align-items:center; gap:11px; flex-wrap:wrap;">' +
+        '<span id="st-default-email" style="flex:1; min-width:200px; font-size:13px; color:'+((globalSettings.defaultEmailTo)?C.ink:C.faint)+';">'+esc(globalSettings.defaultEmailTo || "(none set \u2014 falling back to the database address in DBn_EMAILTO)")+'</span>' +
+        '<button id="st-edit-email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
+      '</div>';
+
+    var kv = function (k, v) {
+      return '<div style="display:flex; justify-content:space-between; gap:12px; padding:5px 0; font-size:12.5px;">' +
+        '<span style="color:'+C.soft+';">'+k+'</span><span style="color:'+C.ink+'; font-weight:600;">'+v+'</span></div>';
+    };
+    var rp = globalSettings.report;
+    var statusPanel =
+      kv("Oil reminders", autoOil ? "Automatic" : "Manual confirmation") +
+      kv("Custom reminders", autoCustom ? "Automatic" : "Manual confirmation") +
+      kv("Scheduled report", rp && rp.enabled
+        ? (rp.frequency === "weekly" ? "Weekly" : "Daily") + " at " + esc(rp.time || "07:00")
+        : "Off") +
+      kv("Tracked assets", (cache.allDevices || []).length) +
+      kv("Custom reminders defined", (cache.customList || []).filter(function (r){ return r.details && r.details.deviceId; }).length);
+
+    settingsEl.innerHTML =
+      banner +
+      panel("Automatic reminder handling",
+        "Controls whether the automation script is allowed to reset a reminder on its own when it comes due. Changes save immediately and apply on the next run.",
+        autoPanel) +
+      panel("Default email recipients",
+        "Used by every reminder and report that doesn't set its own recipients. Comma-separated.",
+        emailPanel) +
+      panel("Current configuration", null, statusPanel);
+
+    var oilCb = $("st-oil");
+    if (oilCb) oilCb.addEventListener("change", function () {
+      var val = oilCb.checked;
+      patchSettings({ autoResetOil: val })
+        .then(function () { toast(val ? "Oil reminders will auto-reset" : "Oil reminders now need manual confirmation"); renderSettings(devices); })
+        .catch(function (e){ oilCb.checked = !val; toast("Save failed: "+(e&&e.message?e.message:e)); });
+    });
+    var cusCb = $("st-custom");
+    if (cusCb) cusCb.addEventListener("change", function () {
+      var val = cusCb.checked;
+      patchSettings({ autoResetCustom: val })
+        .then(function () { toast(val ? "Custom reminders will auto-reset" : "Custom reminders now need manual confirmation"); renderSettings(devices); })
+        .catch(function (e){ cusCb.checked = !val; toast("Save failed: "+(e&&e.message?e.message:e)); });
+    });
+    var editEmail = $("st-edit-email");
+    if (editEmail) editEmail.addEventListener("click", function () {
+      var input = window.prompt("Default email recipients for ALL reminders and reports (comma-separated):", globalSettings.defaultEmailTo || "");
+      if (input === null) return;
+      patchSettings({ defaultEmailTo: input.trim() || null })
+        .then(function () { toast("Default recipients saved"); renderSettings(devices); });
+    });
+  }
+
   // ---- theme + tabs --------------------------------------------------
   function $(id) { return document.getElementById(id); }
   function applyTheme() {
-    C = THEMES[theme];
-    if (bodyEl) { bodyEl.style.background = C.page; bodyEl.style.color = C.ink; }
+    C = THEMES.dark;
+    if (bodyEl) bodyEl.style.color = C.ink;
     var eye = $("appEyebrow"); if (eye) eye.style.color = C.brand;
-    var sub = $("appSub"); if (sub) sub.style.color = C.soft;
-    var tb = $("themeBtn");
-    if (tb) {
-      tb.textContent = theme==="dark" ? "Light" : "Dark";
-      tb.style.background = C.card; tb.style.border = "1px solid "+C.line; tb.style.color = C.ink;
-    }
+    var lu = $("lastUpdated"); if (lu) lu.style.color = C.faint;
+    var ttl = $("appTitle"); if (ttl) ttl.style.color = C.ink;
     var rb = $("refreshBtn");
-    if (rb) { rb.style.background = C.card; rb.style.border = "1px solid "+C.line; rb.style.color = C.brand; }
-    var gs = $("groupSelect");
-    if (gs) { gs.style.background = C.card; gs.style.border = "1px solid "+C.line; gs.style.color = C.ink; }
-    var rs = $("rangeSelect");
-    if (rs) { rs.style.background = C.card; rs.style.border = "1px solid "+C.line; rs.style.color = C.ink; }
+    if (rb) {
+      rb.style.background = "linear-gradient(180deg,"+C.brand+",#d98e14)";
+      rb.style.border = "1px solid rgba(245,166,35,.5)";
+      rb.style.color = C.onBrand;
+      rb.style.boxShadow = "0 0 18px -4px rgba(245,166,35,.55)";
+    }
+    ["groupSelect","rangeSelect"].forEach(function (id) {
+      var el = $(id); if (!el) return;
+      el.style.background = C.card; el.style.border = "1px solid "+C.line; el.style.color = C.ink;
+      el.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,.03)";
+    });
     var tabsWrap = $("tabs");
-    if (tabsWrap) tabsWrap.style.borderBottom = "1px solid "+C.line;
+    if (tabsWrap) {
+      tabsWrap.style.background = C.card;
+      tabsWrap.style.border = "1px solid "+C.line;
+      tabsWrap.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,.035), 0 8px 22px -16px rgba(0,0,0,.9)";
+    }
     styleTabs();
   }
   function styleTabs() {
     if (!healthEl) return;
-    var active = "health";
-    if (oilEl && oilEl.style.display!=="none") active = "oil";
-    else if (customEl && customEl.style.display!=="none") active = "custom";
-    else if (healthEl.style.display!=="none") active = "health";
     document.querySelectorAll("#tabs button").forEach(function (b) {
-      var on = b.getAttribute("data-tab")===active;
-      b.style.borderBottom = on ? "2px solid "+C.brand : "2px solid transparent";
+      var on = b.getAttribute("data-tab")===activeTab;
+      b.style.background = on ? C.brandSoft : "transparent";
       b.style.color = on ? C.brand : C.soft;
+      b.style.boxShadow = on ? "inset 0 0 0 1px rgba(245,166,35,.28), 0 0 16px -6px rgba(245,166,35,.55)" : "none";
     });
   }
+  var activeTab = "health";
   function switchTab(name) {
+    activeTab = name;
     if (healthEl) healthEl.style.display = name==="health"?"":"none";
     if (oilEl) oilEl.style.display = name==="oil"?"":"none";
     if (customEl) customEl.style.display = name==="custom"?"":"none";
+    if (reportEl) reportEl.style.display = name==="report"?"":"none";
+    if (settingsEl) settingsEl.style.display = name==="settings"?"":"none";
     styleTabs();
   }
 
@@ -1862,18 +2461,20 @@ geotab.addin.jackMaintenance = function () {
     renderHealth(devices, cache.odoMap, cache.faultMap, cache.oilMap, cache.sensorMap);
     if (oilEl) renderOil(devices, cache.odoMap, cache.oilMap, cache.sensorMap);
     if (customEl) renderCustom(devices, cache.odoMap, cache.customList);
+    if (reportEl) renderReport(devices);
+    if (settingsEl) renderSettings(devices);
   }
 
   function reloadAll() {
     if (!healthEl) return;
-    healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Loading fleet…</div>';
+    healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:34px 18px;">Loading fleet…</div>';
     Promise.all([ safe(getDevices(), []), safe(getGroups(), []) ]).then(function (r) {
       cache.allDevices = r[0];
       populateGroupSelect();
       var devices = cache.allDevices; // load data for ALL devices; filter at render time
       return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]), safe(getGlobalSettings(),{settingsKey:"global",defaultEmailTo:null}), safe(getFuelLevels(devices),{}) ]);
     }).then(function (res) {
-      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4]; globalSettings = res[5] || globalSettings;
+      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4]; globalSettings = res[5] || globalSettings; reportDraft = null; // re-seed the report editor from what was just loaded
       var fuelMap = res[6] || {};
       // merge dedicated fuel readings into the sensor map so the detail panel uses them
       Object.keys(fuelMap).forEach(function (id){
@@ -1891,7 +2492,7 @@ geotab.addin.jackMaintenance = function () {
       var lu = document.getElementById("lastUpdated");
       if (lu) lu.textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
     }).catch(function (err) {
-      if (healthEl) healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:56px 20px;">Couldn\u2019t load data: '+(err&&err.message?err.message:err)+'</div>';
+      if (healthEl) healthEl.innerHTML = '<div style="text-align:center; color:'+C.soft+'; padding:34px 18px;">Couldn\u2019t load data: '+(err&&err.message?err.message:err)+'</div>';
     });
   }
 
@@ -1904,13 +2505,11 @@ geotab.addin.jackMaintenance = function () {
         bodyEl = document.getElementById("body"); rootEl = document.getElementById("root");
         healthEl = document.getElementById("health"); oilEl = document.getElementById("oil");
         customEl = document.getElementById("custom");
+        reportEl = document.getElementById("report");
+        settingsEl = document.getElementById("settings");
         groupSelectEl = document.getElementById("groupSelect");
         toastEl = document.getElementById("toast");
         var rb = $("refreshBtn"); if (rb) rb.addEventListener("click", reloadAll);
-        var tb = $("themeBtn");
-        if (tb) tb.addEventListener("click", function () {
-          theme = theme==="dark"?"light":"dark"; applyTheme(); renderAll();
-        });
         if (groupSelectEl) groupSelectEl.addEventListener("change", function () {
           selectedGroupId = groupSelectEl.value || null;
           renderAll();
