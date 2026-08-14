@@ -5,96 +5,95 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>DynastyJack Maintenance</title>
 <style>
-  /* ---- Dark shell -------------------------------------------------- */
-  html, body { background:#070a0f; }
+  /* ---- Shell --------------------------------------------------------
+     Flat, product-style dark surface. Panels read as quiet cards with a
+     hairline border rather than glowing objects. */
+  html, body { background:#05080b; }
   body {
-    background:
-      radial-gradient(1100px 520px at 50% -12%, #131c2b 0%, rgba(19,28,43,0) 62%),
-      radial-gradient(760px 400px at 100% 0%, #1a1408 0%, rgba(26,20,8,0) 55%),
-      #070a0f !important;
-    background-attachment: fixed;
+    background: #05080b !important;
     -webkit-font-smoothing: antialiased;
     font-variant-numeric: tabular-nums;
   }
   * { box-sizing: border-box; }
-  ::selection { background: rgba(245,166,35,.26); }
+  ::selection { background: rgba(56,189,248,.28); }
 
-  /* thin dark scrollbars so the app doesn't get a bright gutter */
   ::-webkit-scrollbar { width:10px; height:10px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background:#232e3d; border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
-  ::-webkit-scrollbar-thumb:hover { background:#31405480; background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb { background:#1d3640; border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background:#2a4a57; background-clip:padding-box; }
 
-  /* ---- Backlit panels ---------------------------------------------
-     Every card in this app is a rounded 12px div. Rather than editing a
-     hundred inline styles, the glow is applied here: a hairline rim, a
-     warm bloom bleeding out from the edge, and a deep drop so panels
-     read as lit-from-behind rather than as flat boxes. */
+  /* Panels: hairline rim + a soft drop for depth. No coloured bloom. */
   #root div[style*="border-radius:12px"] {
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.045),
-      0 0 0 1px rgba(245,166,35,.045),
-      0 0 24px -10px rgba(245,166,35,.30),
-      0 16px 38px -20px rgba(0,0,0,.95) !important;
-    transition: box-shadow .18s ease, border-color .18s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.9) !important;
+    transition: border-color .15s ease;
   }
-  #root div[style*="border-radius:12px"]:hover {
-    border-color: rgba(245,166,35,.28) !important;
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.06),
-      0 0 0 1px rgba(245,166,35,.11),
-      0 0 34px -8px rgba(245,166,35,.42),
-      0 18px 44px -20px rgba(0,0,0,.95) !important;
-  }
+  #root div[style*="border-radius:12px"]:hover { border-color:#28505e !important; }
 
   /* ---- Controls ----------------------------------------------------- */
   #root input, #root select, #root button, #root textarea { font-family: inherit; outline: none; }
   #root input:focus, #root select:focus {
-    border-color: rgba(245,166,35,.55) !important;
-    box-shadow: 0 0 0 3px rgba(245,166,35,.13) !important;
+    border-color: rgba(56,189,248,.6) !important;
+    box-shadow: 0 0 0 3px rgba(56,189,248,.14) !important;
   }
-  #root button { transition: filter .15s ease, box-shadow .15s ease, border-color .15s ease; }
-  #root button:hover { filter: brightness(1.18); }
+  #root button { transition: background-color .14s ease, border-color .14s ease, color .14s ease; }
+  #root button:hover { filter: brightness(1.12); }
   #root button:active { transform: translateY(1px); }
   #root select { appearance: none; -webkit-appearance: none; padding-right: 26px !important;
-    background-image: linear-gradient(45deg, transparent 50%, #7d8899 50%), linear-gradient(135deg, #7d8899 50%, transparent 50%);
+    background-image: linear-gradient(45deg, transparent 50%, #8ba3ad 50%), linear-gradient(135deg, #8ba3ad 50%, transparent 50%);
     background-position: calc(100% - 15px) calc(50% + 1px), calc(100% - 10px) calc(50% + 1px);
     background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
-  #root input[type="checkbox"] { accent-color:#f5a623; }
+  #root input[type="checkbox"] { accent-color:#38bdf8; }
 
-  /* ---- Header rail --------------------------------------------------- */
-  #appRail { height:2px; border-radius:2px; margin-bottom:16px;
-    background: linear-gradient(90deg, #f5a623 0%, #b9761a 22%, rgba(245,166,35,0) 68%);
-    box-shadow: 0 0 14px rgba(245,166,35,.55); }
+  /* ---- Brand wordmark ------------------------------------------------ */
+  #brandMark { display:flex; align-items:center; gap:11px; }
+  #wordmark { font-size:19px; font-weight:800; letter-spacing:-0.03em; line-height:1.05; }
+  #wordmark .lo { color:#e6f0f5; }
+  #wordmark .hi { color:#38bdf8; }
+  #brandSub { font-size:11.5px; color:#5e747e; margin-top:1px; letter-spacing:.01em; }
 </style>
 </head>
 <body id="body" style="margin:0; min-height:100vh; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; font-size:14px; line-height:1.4;">
 <div id="root" style="max-width:1180px; margin:0 auto; padding:16px 20px 44px;">
-  <div id="appRail"></div>
-  <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:12px;">
-    <div style="min-width:0;">
-      <div id="appEyebrow" style="font-size:10px; font-weight:700; letter-spacing:0.18em; text-transform:uppercase; font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace; margin-bottom:3px;">Dynasty Fleet Maintenance</div>
-      <div id="appTitle" style="font-size:21px; font-weight:750; letter-spacing:-0.022em; line-height:1.15;">DynastyJack Maintenance</div>
-      <div id="lastUpdated" style="margin-top:3px; font-size:11px; letter-spacing:.02em;"></div>
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:14px;">
+    <div id="brandMark">
+      <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true" style="flex:none;">
+        <circle cx="20" cy="20" r="18" fill="none" stroke="#f97316" stroke-width="3.5"/>
+        <circle cx="20" cy="20" r="11.5" fill="none" stroke="#38bdf8" stroke-width="3.5"/>
+        <circle cx="20" cy="20" r="4.5" fill="#a78bfa"/>
+        <rect x="19" y="1" width="2.5" height="9" rx="1.2" fill="#0a0e15"/>
+      </svg>
+      <div style="min-width:0;">
+        <div id="wordmark"><span class="lo">dynastyJack</span> <span class="hi">maintenance.</span></div>
+        <div id="brandSub">Fleet Service &middot; Dynasty Communications</div>
+      </div>
     </div>
     <div style="display:flex; gap:7px; align-items:center; flex-wrap:wrap;">
+      <span id="lastUpdated" style="font-size:11px; letter-spacing:.02em; margin-right:3px;"></span>
       <select id="rangeSelect" style="border-radius:8px; padding:7px 10px; font-size:12.5px; cursor:pointer;" title="Fault lookback window">
         <option value="1">Last 24 hours</option>
         <option value="7" selected>Last 7 days</option>
         <option value="30">Last month</option>
       </select>
       <select id="groupSelect" style="border-radius:8px; padding:7px 10px; font-size:12.5px; cursor:pointer; max-width:230px;"></select>
-      <button id="refreshBtn" style="border-radius:8px; padding:7px 15px; font-size:12.5px; font-weight:650; cursor:pointer;">Refresh</button>
+      <button id="refreshBtn" title="Reload fleet data" style="border-radius:8px; padding:7px 13px; font-size:12.5px; font-weight:650; cursor:pointer;">&#8635; Refresh</button>
     </div>
   </div>
+
+  <div id="appBanner" style="display:flex; align-items:center; gap:12px; border-radius:10px; padding:11px 14px; margin-bottom:14px;">
+    <span id="appBannerBar" style="width:3px; align-self:stretch; border-radius:2px; flex:none;"></span>
+    <div id="appBannerText" style="font-size:12.5px; line-height:1.5;"></div>
+  </div>
+
+  <div id="appEyebrow" style="display:none;"></div>
+  <div id="appTitle" style="display:none;"></div>
   <div id="appSub" style="display:none;"></div>
 
-  <div id="tabs" style="display:inline-flex; gap:3px; margin-bottom:14px; flex-wrap:wrap; padding:3px; border-radius:10px;">
-    <button data-tab="health" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Fleet Health</button>
-    <button data-tab="oil" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Oil Reminders</button>
-    <button data-tab="custom" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Custom Reminders</button>
-    <button data-tab="report" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Reporting</button>
-    <button data-tab="settings" style="background:none; border:none; font-weight:650; font-size:13px; padding:7px 15px; border-radius:7px; cursor:pointer;">Settings</button>
+  <div id="tabs" style="display:flex; gap:2px; margin-bottom:16px; flex-wrap:wrap;">
+    <button data-tab="health" style="background:none; border:none; font-weight:650; font-size:13.5px; padding:9px 14px; cursor:pointer;">Fleet Health<span data-count="health"></span></button>
+    <button data-tab="oil" style="background:none; border:none; font-weight:650; font-size:13.5px; padding:9px 14px; cursor:pointer;">Oil<span data-count="oil"></span></button>
+    <button data-tab="custom" style="background:none; border:none; font-weight:650; font-size:13.5px; padding:9px 14px; cursor:pointer;">Service<span data-count="custom"></span></button>
+    <button data-tab="report" style="background:none; border:none; font-weight:650; font-size:13.5px; padding:9px 14px; cursor:pointer;">Reporting</button>
+    <button data-tab="settings" style="background:none; border:none; font-weight:650; font-size:13.5px; padding:9px 14px; cursor:pointer;">Setup</button>
   </div>
 
   <div id="health"></div>
@@ -117,15 +116,15 @@ var METERS_PER_UNIT = UNITS === "km" ? 1000 : 1609.344;
 var FAULT_LOOKBACK_DAYS = 7; // controlled by the range selector (24h / 7d / 30d)
 
 // ---- Theme ------------------------------------------------------------
-// Dark only. The panel glow lives in C.shadow and is reinforced by the
-// #root rule in the <style> block above, which catches nested cards too.
+// Flat product-dark: near-black surface, hairline borders, cyan primary with
+// a violet secondary for state badges. No coloured glow on panels.
 var THEMES = {
   dark: {
-    page:"#070a0f", card:"#0e131c", card2:"#151c28", ink:"#e9eef7", soft:"#7f8b9d",
-    faint:"#515c6c", line:"#1e2836", brand:"#f5a623", brandSoft:"#2c2010", onBrand:"#150f02", track:"#161e2a",
-    green:"#37d399", greenBg:"#0b2a20", amber:"#f79245", amberBg:"#2f1d0e", lowamber:"#e3ac7c", lowamberBg:"#251707",
-    red:"#fb7185", redBg:"#2f1318", device:"#ecd04e", deviceBg:"#26200a", purple:"#c08cf0", purpleBg:"#201731",
-    shadow:"inset 0 1px 0 rgba(255,255,255,.045), 0 0 0 1px rgba(245,166,35,.045), 0 0 24px -10px rgba(245,166,35,.30), 0 16px 38px -20px rgba(0,0,0,.95)"
+    page:"#05080b", card:"#0d1b22", card2:"#12252e", ink:"#e6f0f5", soft:"#8ba3ad",
+    faint:"#5e747e", line:"#1d3640", brand:"#38bdf8", brandSoft:"#0d2c3a", onBrand:"#04141d", track:"#15272f",
+    green:"#34d399", greenBg:"#082a22", amber:"#fbbf24", amberBg:"#2b2008", lowamber:"#f0b866", lowamberBg:"#241a06",
+    red:"#f87171", redBg:"#2c1417", device:"#a78bfa", deviceBg:"#1c1733", purple:"#a78bfa", purpleBg:"#1c1733",
+    shadow:"0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.9)"
   }
 };
 var C = THEMES.dark;
@@ -144,6 +143,37 @@ geotab.addin.jackMaintenance = function () {
   var expandedOil = {};     // deviceId -> true if its oil card is expanded (collapsed by default)
   // Fleet-wide settings, shared with check-oil-reminders.js via the custom
   // AddInData store (the record whose settingsKey === "global").
+  // How aggressively the fleet flags work. Drives the "due soon" windows in
+  // the Add-In and in check-oil-reminders.js.
+  var CAUTION = {
+    lean:     { label:"Run it lean", blurb:"Fewer trucks called in, slightly more risk carried.",
+                scoreShift:-1, dueNowPct:0,  dueSoonPct:10, dateDays:7 },
+    balanced: { label:"Balanced", blurb:"What most shops run. Enough runway to order parts.",
+                scoreShift:0,  dueNowPct:5,  dueSoonPct:20, dateDays:14 },
+    safe:     { label:"Play it safe", blurb:"Flag things early. More bay time, fewer surprises.",
+                scoreShift:1,  dueNowPct:10, dueSoonPct:30, dateDays:30 }
+  };
+  var CAUTION_ORDER = ["lean","balanced","safe"];
+
+  // Every alert the automation can send. `id` is what the script checks.
+  var ALERT_DEFS = [
+    { id:"undrivable",  title:"Anything that can't be driven",        note:"Immediate \u00b7 email to shop and dispatch", def:true },
+    { id:"redLamp",     title:"Red stop lamp on",                      note:"Immediate \u00b7 email",                      def:true },
+    { id:"safetyItem",  title:"Safety item \u2014 brakes, ABS, steering, tires", note:"Email",                     def:true },
+    { id:"oilDue",      title:"Oil change due",                        note:"When the interval is reached \u00b7 email",   def:true },
+    { id:"oilSoon",     title:"Oil change coming up",                  note:"At the due-soon window \u00b7 email",         def:true },
+    { id:"serviceDue",  title:"Custom service due",                    note:"Daily digest \u00b7 email",                   def:true },
+    { id:"serviceDone", title:"Service marked done",                   note:"Confirmation \u00b7 email",                   def:true },
+    { id:"stopped",     title:"Truck stopped reporting",               note:"After 7 days of silence \u00b7 email",        def:false },
+    { id:"deviceFault", title:"Device / tracker fault",                note:"Email",                                       def:false }
+  ];
+  function defaultAlerts() {
+    var a = {}; ALERT_DEFS.forEach(function (d){ a[d.id] = d.def; }); return a;
+  }
+
+  var SEVERITIES = ["critical","high","medium","low","ignore"];
+  var SEV_LABEL = { critical:"Severe", high:"Maintenance", medium:"Maintenance", low:"Advisory", ignore:"Device" };
+
   var DEFAULT_REPORT = {
     enabled:false, frequency:"daily", dayOfWeek:1, time:"07:00",
     timezone:"America/New_York", recipients:"",
@@ -155,9 +185,35 @@ geotab.addin.jackMaintenance = function () {
     defaultEmailTo:null,
     autoResetOil:true,     // false => oil reminders stay due until marked serviced
     autoResetCustom:true,  // false => custom reminders stay due until marked done
+    caution:"balanced",    // lean | balanced | safe — see CAUTION
+    alerts:null,           // { alertId: bool }, defaults from ALERT_DEFS
+    faultOverrides:[],     // [{ code, label, from, to, muted, note }]
     report:null
   };
-  var globalSettings = { settingsKey:"global", defaultEmailTo:null, autoResetOil:true, autoResetCustom:true, report:null };
+  var globalSettings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+
+  // Active caution profile + the thresholds derived from it.
+  function caution() { return CAUTION[globalSettings.caution] || CAUTION.balanced; }
+  // "Due soon" window for a distance reminder, in miles.
+  function soonWindow(intervalUnits) {
+    return Math.max(50, Math.round((intervalUnits || DEFAULT_INTERVAL_MILES) * caution().dueSoonPct / 100));
+  }
+  function alertOn(id) {
+    var a = globalSettings.alerts || defaultAlerts();
+    return a[id] !== false;
+  }
+  // Fleet-wide severity override for a fault, matched on code or name.
+  function overrideFor(codeOrName) {
+    var key = String(codeOrName || "").trim().toLowerCase();
+    if (!key) return null;
+    var list = globalSettings.faultOverrides || [];
+    for (var i=0;i<list.length;i++) {
+      var o = list[i];
+      var oc = String(o.code||"").trim().toLowerCase();
+      if (oc && (oc === key || key.indexOf(oc) >= 0)) return o;
+    }
+    return null;
+  }
   var reportDraft = null;   // working copy of globalSettings.report while editing
   var assetFilterText = ""; // search box in the Reporting asset picker
 
@@ -177,7 +233,12 @@ geotab.addin.jackMaintenance = function () {
   function fmt(n) { return Math.round(n).toLocaleString(); }
   function daysAgo(n) { var d = new Date(); d.setDate(d.getDate() - n); return d.toISOString(); }
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
-  function pill(t, bg, fg) { return '<span style="font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; white-space:nowrap; background:'+bg+'; color:'+fg+'; display:inline-block;">'+t+'</span>'; }
+  // Outlined status chip: tinted fill, 1px rim in the same hue, uppercase-ish
+  // weight. Reads as a state badge rather than a coloured blob.
+  function pill(t, bg, fg) {
+    return '<span style="font-size:10.5px; font-weight:700; letter-spacing:.02em; padding:2.5px 9px; border-radius:999px; ' +
+      'white-space:nowrap; background:'+bg+'; color:'+fg+'; border:1px solid '+fg+'4d; display:inline-block; line-height:1.5;">'+t+'</span>';
+  }
   function dot(c) { return '<span style="display:inline-block; width:11px; height:11px; border-radius:50%; background:'+c+'; flex:none;"></span>'; }
 
   // ---- data ----------------------------------------------------------
@@ -315,6 +376,7 @@ geotab.addin.jackMaintenance = function () {
   var globalSettingsRec = null;
   function getGlobalSettings() {
     var fallback = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    fallback.alerts = defaultAlerts();
     return apiCall("Get", { typeName: "AddInData", search: { addInId: CUSTOM_ADD_IN_ID } }).then(function (recs) {
       var found = null;
       recs.forEach(function (r) {
@@ -327,6 +389,10 @@ geotab.addin.jackMaintenance = function () {
       // Add-In still come back with every field present.
       var merged = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
       Object.keys(found.details).forEach(function (k){ merged[k] = found.details[k]; });
+      if (!merged.alerts) merged.alerts = defaultAlerts();
+      else { var da = defaultAlerts(); Object.keys(da).forEach(function (k){ if (merged.alerts[k] === undefined) merged.alerts[k] = da[k]; }); }
+      if (!Array.isArray(merged.faultOverrides)) merged.faultOverrides = [];
+      if (!CAUTION[merged.caution]) merged.caution = "balanced";
       if (merged.report) {
         var r = JSON.parse(JSON.stringify(DEFAULT_REPORT));
         Object.keys(merged.report).forEach(function (k){ r[k] = merged.report[k]; });
@@ -641,7 +707,7 @@ geotab.addin.jackMaintenance = function () {
             dismissed: dismissed || cleared
           });
         });
-        try { console.log("[DynastyJack] Raw fault severities seen:", JSON.stringify(rawSevSeen)); } catch(e){}
+        try { console.log("[DynastyMaintain] Raw fault severities seen:", JSON.stringify(rawSevSeen)); } catch(e){}
         return by;
       });
     // If faults are slow/unavailable, don't block the dashboard — return empty after 15s.
@@ -727,6 +793,11 @@ geotab.addin.jackMaintenance = function () {
   function riskRating(fault) {
     // fault: { name, code, sevLow (raw Geotab severity, lowercased), isDevice }
     var name = (fault.name || fault.code || "").toLowerCase();
+
+    // Fleet-wide override from the Setup tab wins over everything below.
+    var ov = overrideFor(fault.code) || overrideFor(fault.name);
+    if (ov && ov.to) return ov.to;
+
     // Device/telematics faults have no vehicle impact → ignore
     if (fault.isDevice) return "ignore";
 
@@ -851,7 +922,7 @@ geotab.addin.jackMaintenance = function () {
     // Diagnostic: log the roster + each device's live/dismissed fault tally so we can
     // verify every expected asset is present and see how its faults are classified.
     try {
-      console.log("[DynastyJack] Loaded " + scored.length + " assets:");
+      console.log("[DynastyMaintain] Loaded " + scored.length + " assets:");
       scored.forEach(function (s) {
         var fs = faultSummary(s.health.faults);
         console.log("  • " + s.device.name + " — level=" + s.health.level +
@@ -930,15 +1001,23 @@ geotab.addin.jackMaintenance = function () {
     // Active state is a backlit ring in the metric's own colour rather than a
     // heavy white outline — keeps the row calm while still reading as selected.
     var border = "1px solid " + (active ? fg+"66" : C.line);
-    var shadow = active
-      ? "inset 0 0 0 1px "+fg+"3d, 0 0 22px -6px "+fg+"7a, 0 12px 30px -18px rgba(0,0,0,.95)"
-      : C.shadow;
+    var shadow = active ? "inset 0 0 0 1px "+fg+"55, "+C.shadow : C.shadow;
     return '<div '+(clickable?'data-filter="'+filterKey+'" ':'')+'style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:10px 13px; flex:1; min-width:120px; box-shadow:'+shadow+';'+(clickable?' cursor:pointer;':'')+'">' +
       '<div style="font-size:24px; font-weight:700; letter-spacing:-0.025em; line-height:1.1; color:'+fg+';">'+num+'</div>' +
       '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px;">'+label+(clickable?' \u203a':'')+'</div></div>';
   }
-  function sectionLabel(t) {
-    return '<div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin:18px 2px 10px;">'+t+'</div>';
+  function sectionLabel(t, meta, right) {
+    return '<div style="display:flex; align-items:baseline; gap:10px; margin:18px 2px 10px;">' +
+      '<span style="font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:'+C.soft+';">'+t+'</span>' +
+      (meta ? '<span style="font-size:11.5px; color:'+C.faint+';">'+meta+'</span>' : '') +
+      '<span style="flex:1;"></span>' + (right || '') +
+    '</div>';
+  }
+  // "Automatic" vs "Manual" state chip, mirroring the Setup tab toggles.
+  function resetModePill(isAuto) {
+    return isAuto
+      ? '<span style="font-size:10px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; padding:3px 10px; border-radius:999px; background:'+C.brandSoft+'; color:'+C.brand+'; border:1px solid '+C.brand+'59;">\u21bb Automatic</span>'
+      : '<span style="font-size:10px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; padding:3px 10px; border-radius:999px; background:'+C.purpleBg+'; color:'+C.purple+'; border:1px solid '+C.purple+'59;">Manual confirm</span>';
   }
   function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g,"_"); }
 
@@ -959,7 +1038,7 @@ geotab.addin.jackMaintenance = function () {
     var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:h.level==="device"?C.device:C.green;
     // Backlight: a soft halo in the asset's status colour so health reads at a
     // glance against the black background.
-    var glow = "0 0 18px 1px "+edge+"4d, 0 0 44px 7px "+edge+"26, inset 0 0 0 1px "+edge+"33";
+    var glow = "0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.9), inset 0 0 0 1px "+edge+"1f";
     var chips = "";
     if (h.faults && h.faults.items && h.faults.items.length) {
       var fs = faultSummary(h.faults); // distinct, live-only counts
@@ -1192,7 +1271,7 @@ geotab.addin.jackMaintenance = function () {
     var bodyFill = level==="red"?C.redBg:level==="amber"?C.amberBg:C.greenBg;
     var bodyStroke = level==="red"?C.red:level==="amber"?C.amber:level==="device"?C.device:C.green;
     // Backlight the vehicle graphic itself in its status colour.
-    var carGlow = 'filter:drop-shadow(0 0 4px '+bodyStroke+') drop-shadow(0 0 13px '+bodyStroke+'aa); overflow:visible;';
+    var carGlow = 'filter:drop-shadow(0 0 6px '+bodyStroke+'66); overflow:visible;';
 
     // Each system zone gets its OWN status color: green healthy, amber = warning
     // fault weight, red = critical. This sits on top of the overall body tint.
@@ -1278,7 +1357,7 @@ geotab.addin.jackMaintenance = function () {
       var status;
       if (det.enabled===false) status = "off";
       else if (remaining<=0){ status="due"; counts.due++; }
-      else if (pct>=85){ status="soon"; counts.soon++; }
+      else if (remaining <= soonWindow(interval)){ status="soon"; counts.soon++; }
       else { status="ok"; counts.ok++; }
       items.push({ device:device, rec:rec, det:det, odoMeters:odoMeters, interval:interval, since:since, pct:pct, remaining:remaining, status:status });
     });
@@ -1324,7 +1403,10 @@ geotab.addin.jackMaintenance = function () {
       '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:8px;">Applies to '+scopeNote+' shown below. Leave the email blank and apply to clear per-vehicle recipients (those vehicles fall back to the default above).</div>' +
     '</div>';
 
-    oilEl.innerHTML = summary;
+    oilEl.innerHTML = summary + sectionLabel(
+      "Oil across the fleet",
+      counts.total + " tracked \u00b7 " + (counts.due||0) + " due now",
+      resetModePill(globalSettings.autoResetOil !== false));
     if (counts.total===0) { oilEl.innerHTML += '<div style="text-align:center; color:'+C.soft+'; padding:26px 18px;">No vehicles with odometer data yet.</div>'; return; }
 
     var visible = (oilFilter && oilFilter!=="all") ? items.filter(function (it){ return it.status===oilFilter; }) : items;
@@ -1586,9 +1668,7 @@ geotab.addin.jackMaintenance = function () {
   function oilSumCard(num, label, fg, filterKey) {
     var active = oilFilter===filterKey;
     var border = "1px solid " + (active ? fg+"66" : C.line);
-    var shadow = active
-      ? "inset 0 0 0 1px "+fg+"3d, 0 0 22px -6px "+fg+"7a, 0 12px 30px -18px rgba(0,0,0,.95)"
-      : C.shadow;
+    var shadow = active ? "inset 0 0 0 1px "+fg+"55, "+C.shadow : C.shadow;
     return '<div data-oilfilter="'+filterKey+'" style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:10px 13px; flex:1; min-width:120px; box-shadow:'+shadow+'; cursor:pointer;">' +
       '<div style="font-size:24px; font-weight:700; letter-spacing:-0.025em; line-height:1.1; color:'+fg+';">'+num+'</div>' +
       '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px;">'+label+' \u203a</div></div>';
@@ -1828,7 +1908,22 @@ geotab.addin.jackMaintenance = function () {
         '<button id="cr-edit-default" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
       '</div>';
 
-    customEl.innerHTML = form + settingsBar + '<div id="cr-list">' + listHtml + '</div>';
+    var crTotal = customList.filter(function (r){ return r.details && r.details.deviceId; }).length;
+    var crDue = customList.filter(function (r) {
+      var d = r.details;
+      if (!d || !d.deviceId || d.enabled === false) return false;
+      if (d.type === "days") {
+        var st = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
+        return (Date.now() - st)/86400000 >= d.interval;
+      }
+      var o = odoByDevice[d.deviceId];
+      return o != null && d.baselineMeters != null && (o - d.baselineMeters)/METERS_PER_UNIT >= d.interval;
+    }).length;
+    var crHeader = sectionLabel(
+      "Service across the fleet",
+      crTotal + " item" + (crTotal===1?"":"s") + " \u00b7 " + crDue + " due now",
+      resetModePill(globalSettings.autoResetCustom !== false));
+    customEl.innerHTML = form + settingsBar + crHeader + '<div id="cr-list">' + listHtml + '</div>';
 
     // wire default-recipients editor
     var editDefault = $("cr-edit-default");
@@ -1994,11 +2089,57 @@ geotab.addin.jackMaintenance = function () {
       });
     });
   }
+  // Walk the Geotab group tree root-to-leaf, handing back depth so callers can
+  // render the real hierarchy instead of a flat list. Excluded classification
+  // branches are pruned along with their descendants.
+  function walkGroupTree(cb) {
+    var isChild = {};
+    Object.keys(groupChildren).forEach(function (p){ groupChildren[p].forEach(function (c){ isChild[c] = true; }); });
+    var names = groupNameMap();
+    var seen = {};
+    function walk(id, depth) {
+      if (seen[id]) return; seen[id] = true;
+      var nm = names[id];
+      if (isExcludedGroupName(nm)) return; // prune the whole branch
+      var kids = (groupChildren[id] || []).slice();
+      if (nm && nm !== id) { cb(id, nm, depth); depth = depth + 1; }
+      kids.sort(function (a, b){ return String(names[a]||"").localeCompare(String(names[b]||"")); });
+      kids.forEach(function (c){ walk(c, depth); });
+    }
+    var roots = allGroups.filter(function (g){ return !isChild[g.id]; });
+    roots.sort(function (a, b){ return String(names[a.id]||"").localeCompare(String(names[b.id]||"")); });
+    roots.forEach(function (g){ walk(g.id, 0); });
+  }
+
+  // Devices belonging to a group or any of its descendants.
+  function devicesInGroup(allDevices, groupId) {
+    var allowed = groupWithDescendants(groupId);
+    return allDevices.filter(function (d){ return (deviceGroups[d.id]||[]).some(function (gid){ return allowed[gid]; }); });
+  }
+
   function cssIdSel(s) { return String(s).replace(/["\\]/g,"\\$&"); }
 
   // ---- REPORTING tab ---------------------------------------------------
   // Mirrors the row logic in check-oil-reminders.js so the CSV you download
   // here matches the spreadsheet that gets emailed on schedule.
+  // Most recent completed service from a reminder's history, preferring manual
+  // confirmations over auto-resets. Mirrors lastServiceFrom() in the script.
+  function lastServiceFrom(det) {
+    var hist = (det && det.history) || [];
+    if (!hist.length) return { date:null, odoMeters:null, source:null };
+    var sorted = hist.slice().sort(function (a,b){ return new Date(b.date) - new Date(a.date); });
+    var manual = null;
+    for (var i=0;i<sorted.length;i++) { if (sorted[i].source === "manual") { manual = sorted[i]; break; } }
+    var pick = manual || sorted[0];
+    return { date: pick.date || null, odoMeters: pick.odoMeters != null ? pick.odoMeters : null, source: pick.source || null };
+  }
+  function fmtServiceDate(iso) {
+    if (!iso) return "\u2014";
+    var d = new Date(iso);
+    if (isNaN(d)) return "\u2014";
+    return d.toLocaleDateString("en-US", { year:"numeric", month:"short", day:"numeric" });
+  }
+
   function buildReportRows(devices) {
     var customByDevice = {};
     (cache.customList || []).forEach(function (r) {
@@ -2008,12 +2149,14 @@ geotab.addin.jackMaintenance = function () {
       if (d.type === "days") {
         var st = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
         var elapsed = (Date.now() - st) / 86400000;
-        if (elapsed >= d.interval) due = true; else if (elapsed >= d.interval*0.85) soon = true;
+        if (elapsed >= d.interval) due = true;
+        else if ((d.interval - elapsed) <= caution().dateDays) soon = true;
       } else {
         var o = cache.odoMap[d.deviceId];
         if (o != null && d.baselineMeters != null) {
           var since = (o - d.baselineMeters)/METERS_PER_UNIT;
-          if (since >= d.interval) due = true; else if (since >= d.interval*0.85) soon = true;
+          if (since >= d.interval) due = true;
+          else if ((d.interval - since) <= soonWindow(d.interval)) soon = true;
         }
       }
       if (!customByDevice[d.deviceId]) customByDevice[d.deviceId] = { due:0, soon:0 };
@@ -2039,7 +2182,7 @@ geotab.addin.jackMaintenance = function () {
         var since = (odoMeters - det.lastNotifiedMeters)/METERS_PER_UNIT;
         remaining = interval - since;
         if (remaining <= 0) status = (globalSettings.autoResetOil === false) ? "Overdue \u2014 awaiting confirmation" : "Due now";
-        else if (remaining <= 500) status = "Due soon";
+        else if (remaining <= soonWindow(interval)) status = "Due soon";
         else status = "On track";
       }
 
@@ -2054,12 +2197,15 @@ geotab.addin.jackMaintenance = function () {
         }
       }
 
+      var last = lastServiceFrom(det);
       return {
         deviceId: device.id,
         name: device.name,
         status: status,
         remaining: remaining == null ? null : Math.round(remaining),
-        odo: odoMeters == null ? null : Math.round(odoMeters/METERS_PER_UNIT)
+        odo: odoMeters == null ? null : Math.round(odoMeters/METERS_PER_UNIT),
+        lastDate: last.date,
+        lastOdo: last.odoMeters == null ? null : Math.round(last.odoMeters/METERS_PER_UNIT)
       };
     }).sort(function (a,b){ return String(a.name).localeCompare(String(b.name), undefined, {numeric:true}); });
   }
@@ -2072,7 +2218,13 @@ geotab.addin.jackMaintenance = function () {
       return allDevices.filter(function (d){ return want[d.id]; });
     }
     if (r.assetMode === "groups") {
-      var wantG = {}; (r.groupIds||[]).forEach(function (id){ wantG[id]=true; });
+      // Selecting a parent group must include everything beneath it, so expand
+      // each chosen group to its full descendant set before matching.
+      var wantG = {};
+      (r.groupIds||[]).forEach(function (id) {
+        var tree = groupWithDescendants(id);
+        Object.keys(tree).forEach(function (gid){ wantG[gid] = true; });
+      });
       return allDevices.filter(function (d){ return (deviceGroups[d.id]||[]).some(function (gid){ return wantG[gid]; }); });
     }
     return allDevices;
@@ -2108,10 +2260,18 @@ geotab.addin.jackMaintenance = function () {
     if (TZS.indexOf(r.timezone) < 0 && r.timezone) TZS.unshift(r.timezone);
 
     // ---- schedule panel ----
+    var onPill = r.enabled
+      ? '<span style="font-size:10.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:'+C.green+'; background:'+C.greenBg+'; border:1px solid '+C.green+'55; border-radius:999px; padding:3px 10px;">Scheduled \u00b7 On</span>'
+      : '<span style="font-size:10.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:'+C.faint+'; background:'+C.track+'; border:1px solid '+C.line+'; border-radius:999px; padding:3px 10px;">Off</span>';
     var schedule =
-      toggleRow("rp-enabled", r.enabled, "Email this report automatically",
-        "When off, nothing is sent on a schedule \u2014 you can still download or send a test below.") +
-      '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top:8px;">' +
+      '<div style="display:flex; align-items:center; gap:11px; padding:9px 11px; border:1px solid '+(r.enabled?C.green+"44":C.line)+'; border-radius:10px; background:'+C.card2+'; margin-bottom:11px;'+(r.enabled?'':'')+'">' +
+        '<input type="checkbox" id="rp-enabled" '+(r.enabled?"checked":"")+' style="width:17px; height:17px; flex:none;">' +
+        '<label for="rp-enabled" style="cursor:pointer; flex:1;">' +
+          '<span style="font-size:13.5px; font-weight:700; color:'+C.ink+';">Turn on the scheduled fleet report</span>' +
+          '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px;">Saves the moment you flip it. When off, nothing is emailed on a schedule \u2014 you can still download or send a test below.</div>' +
+        '</label>' + onPill +
+      '</div>' +
+      '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">' +
         '<label>'+fieldLabel("Frequency")+'<select id="rp-freq" style="'+inputCss+'">' +
           '<option value="daily"'+(r.frequency==="daily"?" selected":"")+'>Daily</option>' +
           '<option value="weekly"'+(r.frequency==="weekly"?" selected":"")+'>Weekly</option>' +
@@ -2131,6 +2291,19 @@ geotab.addin.jackMaintenance = function () {
     var selected = selectedReportDevices(all, r);
     var selIds = {}; selected.forEach(function (d){ selIds[d.id]=true; });
 
+    // Every mode gets an explicit "add these to the list" action on the right,
+    // so you're never stuck able to add only via the group dropdown.
+    var addBtnCss = 'border:1px solid '+C.brand+'59; background:'+C.brandSoft+'; color:'+C.brand+'; border-radius:7px; padding:5px 12px; font-size:12.5px; font-weight:650; cursor:pointer;';
+    var actionBtn = "";
+    if (r.assetMode === "all") {
+      actionBtn = '<button id="rp-addall" style="'+addBtnCss+'">Add all '+all.length+' assets to the list</button>';
+    } else if (r.assetMode === "groups") {
+      var canAdd = selected.length > 0;
+      var gBtnCss = canAdd ? addBtnCss
+        : 'border:1px solid '+C.line+'; background:transparent; color:'+C.faint+'; border-radius:8px; padding:5px 12px; font-size:12.5px; font-weight:650; cursor:not-allowed;';
+      actionBtn = '<button id="rp-addgroups"'+(canAdd?"":" disabled")+' style="'+gBtnCss+'">Add these '+selected.length+' asset'+(selected.length===1?"":"s")+' to the list</button>';
+    }
+
     var modeRow =
       '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">' +
         '<label>'+fieldLabel("Include")+'<select id="rp-mode" style="'+inputCss+'">' +
@@ -2139,58 +2312,95 @@ geotab.addin.jackMaintenance = function () {
           '<option value="assets"'+(r.assetMode==="assets"?" selected":"")+'>Selected assets</option>' +
         '</select></label>' +
         '<div style="flex:1;"></div>' +
-        '<span style="font-size:12px; color:'+(selected.length?C.green:C.red)+'; font-weight:600;">'+selected.length+' of '+all.length+' asset'+(all.length===1?"":"s")+' included</span>' +
+        '<div style="display:flex; gap:9px; align-items:center;">' +
+          actionBtn +
+          '<span style="font-size:12px; color:'+(selected.length?C.green:C.red)+'; font-weight:650; font-variant-numeric:tabular-nums;">'+selected.length+' of '+all.length+' asset'+(all.length===1?"":"s")+' included</span>' +
+        '</div>' +
       '</div>';
 
     var picker = "";
-    if (r.assetMode === "groups") {
+    if (r.assetMode === "all") {
+      picker = '<div style="margin-top:11px; font-size:12px; color:'+C.soft+'; line-height:1.55;">' +
+        'Every asset in the database is included, and any vehicle added later is picked up automatically. ' +
+        'Use the button above if you\u2019d rather freeze the list and remove a few by hand.</div>';
+    } else if (r.assetMode === "groups") {
       var gsel = {}; (r.groupIds||[]).forEach(function (id){ gsel[id]=true; });
-      var groupRows = allGroups.filter(function (g){ return names[g.id] && !isExcludedGroupName(names[g.id]); })
-        .map(function (g) {
-          var allowed = groupWithDescendants(g.id);
-          var count = all.filter(function (dev){ return (deviceGroups[dev.id]||[]).some(function (gid){ return allowed[gid]; }); }).length;
-          return '<label style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px; cursor:pointer; background:'+(gsel[g.id]?C.brandSoft:"transparent")+';">' +
-            '<input type="checkbox" data-rpgroup="'+esc(g.id)+'" '+(gsel[g.id]?"checked":"")+' style="width:15px;height:15px;">' +
-            '<span style="font-size:13px; color:'+C.ink+';">'+esc(names[g.id])+'</span>' +
+      var groupRows = "";
+      var groupCount = 0;
+      walkGroupTree(function (gid, gname, depth) {
+        groupCount++;
+        var count = devicesInGroup(all, gid).length;
+        var on = !!gsel[gid];
+        groupRows +=
+          '<label style="display:flex; align-items:center; gap:9px; padding:5px 8px; padding-left:'+(8 + depth*20)+'px; border-radius:7px; cursor:pointer; background:'+(on?C.brandSoft:"transparent")+';">' +
+            (depth ? '<span style="color:'+C.faint+'; font-size:11px; margin-left:-13px; width:9px;">\u2514</span>' : '') +
+            '<input type="checkbox" data-rpgroup="'+esc(gid)+'" '+(on?"checked":"")+' style="width:15px;height:15px; flex:none;">' +
+            '<span style="font-size:13px; color:'+(count?C.ink:C.faint)+'; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'+esc(gname)+'</span>' +
             '<span style="flex:1;"></span>' +
-            '<span style="font-size:11.5px; color:'+C.faint+';">'+count+' vehicle'+(count===1?"":"s")+'</span></label>';
-        }).join("");
-      picker = '<div style="margin-top:11px; max-height:280px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
+            '<span style="font-size:11.5px; color:'+C.faint+'; font-variant-numeric:tabular-nums; flex:none;">'+count+'</span></label>';
+      });
+      picker =
+        '<div style="display:flex; gap:8px; align-items:center; margin-top:11px;">' +
+          '<span style="font-size:11px; color:'+C.faint+';">Selecting a group includes its sub-groups. Counts are vehicles in that branch.</span>' +
+          '<span style="flex:1;"></span>' +
+          '<button id="rp-gclear" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer;">Clear</button>' +
+        '</div>' +
+        '<div style="margin-top:8px; max-height:300px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
         (groupRows || '<div style="padding:12px; color:'+C.soft+'; font-size:12.5px;">No groups found.</div>') + '</div>';
     } else if (r.assetMode === "assets") {
       var dsel = {}; (r.deviceIds||[]).forEach(function (id){ dsel[id]=true; });
       var ft = assetFilterText.toLowerCase();
       var shown = all.filter(function (d){ return !ft || String(d.name||"").toLowerCase().indexOf(ft) >= 0; });
-      var assetRows = shown.map(function (d) {
+      // group the asset list under its Geotab group so the tree is still visible
+      var byGroup = {}, groupOrder = [];
+      shown.forEach(function (d) {
         var g = devicePrimaryGroup(d.id);
-        return '<label style="display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:7px; cursor:pointer; background:'+(dsel[d.id]?C.brandSoft:"transparent")+';">' +
-          '<input type="checkbox" data-rpasset="'+esc(d.id)+'" '+(dsel[d.id]?"checked":"")+' style="width:15px;height:15px;">' +
-          '<span style="font-size:13px; color:'+C.ink+';">'+esc(d.name)+'</span>' +
-          '<span style="flex:1;"></span>' +
-          '<span style="font-size:11.5px; color:'+C.faint+';">'+esc(g.name||"")+'</span></label>';
+        var key = g.path && g.path.length ? g.path.join(" \u203a ") : (g.name || "Ungrouped");
+        if (!byGroup[key]) { byGroup[key] = []; groupOrder.push(key); }
+        byGroup[key].push(d);
+      });
+      groupOrder.sort(function (a,b){ return a.localeCompare(b); });
+      var assetRows = groupOrder.map(function (key) {
+        var list = byGroup[key].slice().sort(function (a,b){ return String(a.name).localeCompare(String(b.name), undefined, {numeric:true}); });
+        var onCount = list.filter(function (d){ return dsel[d.id]; }).length;
+        return '<div style="display:flex; align-items:center; gap:8px; padding:7px 8px 4px;">' +
+            '<span style="font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:'+C.brand+';">'+esc(key)+'</span>' +
+            '<span style="flex:1; height:1px; background:'+C.line+';"></span>' +
+            '<button data-rpgpick="'+esc(key)+'" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:6px; padding:2px 8px; font-size:10.5px; font-weight:650; cursor:pointer;">'+(onCount===list.length?"None":"All")+'</button>' +
+          '</div>' +
+          list.map(function (d) {
+            return '<label style="display:flex; align-items:center; gap:9px; padding:5px 8px 5px 18px; border-radius:7px; cursor:pointer; background:'+(dsel[d.id]?C.brandSoft:"transparent")+';">' +
+              '<input type="checkbox" data-rpasset="'+esc(d.id)+'" '+(dsel[d.id]?"checked":"")+' style="width:15px;height:15px; flex:none;">' +
+              '<span style="font-size:13px; color:'+C.ink+'; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'+esc(d.name)+'</span></label>';
+          }).join("");
       }).join("");
       picker =
         '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:11px;">' +
           '<input id="rp-search" type="text" value="'+esc(assetFilterText)+'" placeholder="Filter assets\u2026" style="'+inputCss+' flex:1; min-width:170px;">' +
-          '<button id="rp-all" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Select all'+(ft?" shown":"")+'</button>' +
+          '<button id="rp-all" style="'+addBtnCss+'">Select all'+(ft?" shown":"")+'</button>' +
           '<button id="rp-none" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:5px 11px; font-size:12.5px; font-weight:600; cursor:pointer;">Clear</button>' +
           '<select id="rp-addgroup" style="'+inputCss+'"><option value="">+ Add a whole group\u2026</option>' +
-            allGroups.filter(function (g){ return names[g.id] && !isExcludedGroupName(names[g.id]); })
-              .map(function (g){ return '<option value="'+esc(g.id)+'">'+esc(names[g.id])+'</option>'; }).join("") +
+            (function () { var o = ""; walkGroupTree(function (gid, gname, depth) {
+              var c = devicesInGroup(all, gid).length;
+              o += '<option value="'+esc(gid)+'">'+"\u00a0\u00a0".repeat(depth)+esc(gname)+' ('+c+')</option>';
+            }); return o; })() +
           '</select>' +
         '</div>' +
-        '<div style="margin-top:9px; max-height:300px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
+        '<div style="margin-top:9px; max-height:320px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
           (assetRows || '<div style="padding:12px; color:'+C.soft+'; font-size:12.5px;">No assets match that filter.</div>') + '</div>';
     }
 
     // ---- preview panel ----
     var rows = buildReportRows(selected);
+    var td = 'padding:5px 9px; border-top:1px solid '+C.line+';';
     var previewRows = rows.slice(0, 6).map(function (x) {
       return '<tr>' +
-        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.ink+';">'+esc(x.name)+'</td>' +
-        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.soft+';">'+esc(x.status)+'</td>' +
-        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.soft+'; text-align:right;">'+(x.remaining==null?"\u2014":fmt(x.remaining))+'</td>' +
-        '<td style="padding:5px 9px; border-top:1px solid '+C.line+'; color:'+C.soft+'; text-align:right;">'+(x.odo==null?"\u2014":fmt(x.odo))+'</td>' +
+        '<td style="'+td+' color:'+C.ink+'; white-space:nowrap;">'+esc(x.name)+'</td>' +
+        '<td style="'+td+' color:'+C.soft+';">'+esc(x.status)+'</td>' +
+        '<td style="'+td+' color:'+C.soft+'; text-align:right; font-variant-numeric:tabular-nums;">'+(x.remaining==null?"\u2014":fmt(x.remaining))+'</td>' +
+        '<td style="'+td+' color:'+C.soft+'; text-align:right; font-variant-numeric:tabular-nums;">'+(x.odo==null?"\u2014":fmt(x.odo))+'</td>' +
+        '<td style="'+td+' color:'+C.soft+'; white-space:nowrap;">'+esc(fmtServiceDate(x.lastDate))+'</td>' +
+        '<td style="'+td+' color:'+C.soft+'; text-align:right; font-variant-numeric:tabular-nums;">'+(x.lastOdo==null?"\u2014":fmt(x.lastOdo))+'</td>' +
       '</tr>';
     }).join("");
     var th = 'padding:5px 9px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:'+C.faint+'; text-align:left;';
@@ -2199,7 +2409,8 @@ geotab.addin.jackMaintenance = function () {
       '<table style="width:100%; border-collapse:collapse; font-size:12.5px;"><thead><tr>' +
         '<th style="'+th+'">Asset</th><th style="'+th+'">Status</th>' +
         '<th style="'+th+' text-align:right;">Mi. remaining</th><th style="'+th+' text-align:right;">Odometer</th>' +
-      '</tr></thead><tbody>'+(previewRows || '<tr><td colspan="4" style="padding:12px; color:'+C.soft+';">No assets selected.</td></tr>')+'</tbody></table></div>' +
+        '<th style="'+th+'">Last oil change</th><th style="'+th+' text-align:right;">At odometer</th>' +
+      '</tr></thead><tbody>'+(previewRows || '<tr><td colspan="6" style="padding:12px; color:'+C.soft+';">No assets selected.</td></tr>')+'</tbody></table></div>' +
       (rows.length > 6 ? '<div style="font-size:11px; color:'+C.faint+'; margin-top:7px;">Showing 6 of '+rows.length+' rows.</div>' : '') +
       '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">' +
         '<button id="rp-save" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:650; cursor:pointer;">Save schedule</button>' +
@@ -2212,7 +2423,7 @@ geotab.addin.jackMaintenance = function () {
         "The Excel file is built and emailed by the automation script. It fires on the first scheduled run at or after this time, and only once per period \u2014 so the report can never double-send even if the job runs hourly.",
         schedule) +
       panel("Assets in the report", "Pick the whole fleet, one or more groups, or individual assets.", modeRow + picker) +
-      panel("Columns &amp; preview", "Asset \u00b7 Status \u00b7 Mileage remaining before oil change \u00b7 Odometer reading. This preview uses the data currently loaded in the Add-In.", preview);
+      panel("Columns &amp; preview", "The workbook has two sheets. <b>Fleet Summary</b>: asset, status, mileage remaining before oil change, odometer, and when the last oil change was done and at what mileage. <b>Service History</b>: every service on every asset \u2014 the oil change plus each custom reminder \u2014 with its interval, status, and last completion. Preview below shows sheet 1 from currently loaded data.", preview);
 
     // ---- wiring ----
     function bindVal(id, key, transform) {
@@ -2223,7 +2434,22 @@ geotab.addin.jackMaintenance = function () {
       });
     }
     var en = $("rp-enabled");
-    if (en) en.addEventListener("change", function () { r.enabled = en.checked; renderReport(devices); });
+    if (en) en.addEventListener("change", function () {
+      var val = en.checked;
+      if (val && !(r.recipients||"").trim() && !(globalSettings.defaultEmailTo||"").trim()) {
+        en.checked = false;
+        toast("Set report recipients, or a fleet default in Settings, before turning this on");
+        return;
+      }
+      if (val && !selectedReportDevices(all, r).length) {
+        en.checked = false; toast("Select at least one asset before turning this on"); return;
+      }
+      r.enabled = val;
+      // Flip-to-save: this is the master switch, so don't make it wait for Save.
+      patchSettings({ report: JSON.parse(JSON.stringify(r)) })
+        .then(function () { toast(val ? "Scheduled fleet report is ON" : "Scheduled fleet report turned off"); renderReport(devices); })
+        .catch(function (e){ r.enabled = !val; toast("Save failed: "+(e&&e.message?e.message:e)); renderReport(devices); });
+    });
     bindVal("rp-freq", "frequency");
     bindVal("rp-dow", "dayOfWeek", Number);
     bindVal("rp-tz", "timezone");
@@ -2247,6 +2473,47 @@ geotab.addin.jackMaintenance = function () {
         r.deviceIds = set; renderReport(devices);
       });
     });
+    var addAll = $("rp-addall");
+    if (addAll) addAll.addEventListener("click", function () {
+      r.deviceIds = all.map(function (d){ return d.id; });
+      r.assetMode = "assets";
+      toast("Added all "+r.deviceIds.length+" assets \u2014 uncheck any you don\u2019t want");
+      renderReport(devices);
+    });
+    var addGroups = $("rp-addgroups");
+    if (addGroups) addGroups.addEventListener("click", function () {
+      if (!selected.length) { toast("Select at least one group first"); return; }
+      r.deviceIds = selected.map(function (d){ return d.id; });
+      r.assetMode = "assets";
+      toast("Added "+r.deviceIds.length+" asset"+(r.deviceIds.length===1?"":"s")+" from the selected group(s)");
+      renderReport(devices);
+    });
+    var gclear = $("rp-gclear");
+    if (gclear) gclear.addEventListener("click", function () { r.groupIds = []; renderReport(devices); });
+
+    reportEl.querySelectorAll("[data-rpgpick]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var key = btn.getAttribute("data-rpgpick");
+        var ft3 = assetFilterText.toLowerCase();
+        var list = all.filter(function (d) {
+          if (ft3 && String(d.name||"").toLowerCase().indexOf(ft3) < 0) return false;
+          var g = devicePrimaryGroup(d.id);
+          var k = g.path && g.path.length ? g.path.join(" \u203a ") : (g.name || "Ungrouped");
+          return k === key;
+        });
+        var cur = (r.deviceIds||[]).slice();
+        var allOn = list.every(function (d){ return cur.indexOf(d.id) >= 0; });
+        if (allOn) {
+          var drop = {}; list.forEach(function (d){ drop[d.id] = true; });
+          r.deviceIds = cur.filter(function (id){ return !drop[id]; });
+        } else {
+          list.forEach(function (d){ if (cur.indexOf(d.id) < 0) cur.push(d.id); });
+          r.deviceIds = cur;
+        }
+        renderReport(devices);
+      });
+    });
+
     var search = $("rp-search");
     if (search) {
       search.addEventListener("input", function () {
@@ -2299,10 +2566,12 @@ geotab.addin.jackMaintenance = function () {
     if (csv) csv.addEventListener("click", function () {
       var out = rows;
       if (!out.length) { toast("No assets selected"); return; }
-      var head = ["Asset","Status","Mileage remaining before oil change ("+UNITS+")","Odometer reading ("+UNITS+")"];
+      var head = ["Asset","Status","Mileage remaining before oil change ("+UNITS+")","Odometer reading ("+UNITS+")",
+                  "Last oil change","Odometer at last oil change ("+UNITS+")"];
       function q(v){ v = (v==null?"":String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
       var lines = [head.map(q).join(",")].concat(out.map(function (x) {
-        return [q(x.name), q(x.status), q(x.remaining==null?"":x.remaining), q(x.odo==null?"":x.odo)].join(",");
+        return [q(x.name), q(x.status), q(x.remaining==null?"":x.remaining), q(x.odo==null?"":x.odo),
+                q(x.lastDate ? fmtServiceDate(x.lastDate) : ""), q(x.lastOdo==null?"":x.lastOdo)].join(",");
       }));
       // \ufeff so Excel opens it as UTF-8 rather than mangling the em dashes
       var blob = new Blob(["\ufeff"+lines.join("\r\n")], { type:"text/csv;charset=utf-8;" });
@@ -2326,119 +2595,343 @@ geotab.addin.jackMaintenance = function () {
     });
   }
 
-  // ---- SETTINGS tab ----------------------------------------------------
+  // ---- SETUP tab -------------------------------------------------------
+  function colPanel(title, meta, inner) {
+    return '<div style="background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; box-shadow:'+C.shadow+'; overflow:hidden;">' +
+      '<div style="display:flex; align-items:baseline; gap:9px; padding:12px 14px; border-bottom:1px solid '+C.line+';">' +
+        '<span style="font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:'+C.soft+';">'+title+'</span>' +
+        (meta ? '<span style="font-size:11.5px; color:'+C.faint+';">'+meta+'</span>' : '') +
+      '</div><div style="padding:12px 14px;">'+inner+'</div></div>';
+  }
+  // iOS-style switch, used across the alert list.
+  function switchEl(id, on) {
+    return '<button data-switch="'+id+'" role="switch" aria-checked="'+(on?"true":"false")+'" ' +
+      'style="flex:none; width:40px; height:22px; border-radius:999px; border:1px solid '+(on?C.brand:C.line)+'; ' +
+      'background:'+(on?C.brand:C.track)+'; position:relative; cursor:pointer; padding:0;">' +
+      '<span style="position:absolute; top:2px; left:'+(on?"20px":"2px")+'; width:16px; height:16px; border-radius:50%; ' +
+      'background:'+(on?C.onBrand:"#63757e")+'; transition:left .15s ease;"></span></button>';
+  }
+
   function renderSettings(devices) {
     if (!settingsEl) return;
     var autoOil = globalSettings.autoResetOil !== false;
     var autoCustom = globalSettings.autoResetCustom !== false;
-    var anyManual = !autoOil || !autoCustom;
+    var cur = globalSettings.caution || "balanced";
+    var cfg = CAUTION[cur] || CAUTION.balanced;
 
+    // ---- column 1: caution profile ----
+    var cautionRows = CAUTION_ORDER.map(function (key) {
+      var c = CAUTION[key], on = key === cur;
+      return '<div data-caution="'+key+'" style="display:flex; gap:10px; align-items:flex-start; padding:10px 11px; margin-bottom:8px; cursor:pointer; ' +
+        'border:1px solid '+(on?C.brand+"8c":C.line)+'; border-radius:10px; background:'+(on?C.brandSoft:C.card2)+';">' +
+        '<span style="flex:none; margin-top:1px; width:15px; height:15px; border-radius:50%; border:2px solid '+(on?C.brand:C.faint)+'; ' +
+          'display:inline-flex; align-items:center; justify-content:center;">' +
+          (on?'<span style="width:7px; height:7px; border-radius:50%; background:'+C.brand+';"></span>':'') + '</span>' +
+        '<span><span style="font-size:13px; font-weight:650; color:'+(on?C.ink:C.soft)+';">'+c.label+'</span>' +
+        '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:2px; line-height:1.45;">'+c.blurb+'</div></span></div>';
+    }).join("");
+    var num = function (v){ return '<b style="color:'+C.brand+';">'+v+'</b>'; };
+    var cautionPanel = cautionRows +
+      '<div style="font-size:11.5px; color:'+C.faint+'; line-height:1.6; margin-top:4px;">In numbers: score shift ' +
+      num(cfg.scoreShift > 0 ? "+"+cfg.scoreShift : cfg.scoreShift) + ', due now at ' + num(cfg.dueNowPct+"%") +
+      ' of the interval left, due soon at ' + num(cfg.dueSoonPct+"%") + ', date rules ' + num(cfg.dateDays+" days") + ' out.</div>';
+
+    // ---- column 2: alerts ----
+    var alertRows = ALERT_DEFS.map(function (d, i) {
+      var on = alertOn(d.id);
+      return '<div style="display:flex; align-items:center; gap:12px; padding:11px 0;'+(i?' border-top:1px solid '+C.line+';':'')+'">' +
+        '<span style="flex:1; min-width:0;"><span style="font-size:12.5px; font-weight:600; color:'+(on?C.ink:C.soft)+';">'+d.title+'</span>' +
+        '<div style="font-size:11px; color:'+C.faint+'; margin-top:2px;">'+d.note+'</div></span>' +
+        switchEl("alert:"+d.id, on) + '</div>';
+    }).join("");
+    var alertsPanel =
+      '<div style="font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:'+C.soft+'; margin-bottom:6px;">Who gets them</div>' +
+      '<input id="st-alert-to" type="text" value="'+esc(globalSettings.defaultEmailTo || "")+'" placeholder="shop@dynastync.com" ' +
+        'style="width:100%; padding:8px 10px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';">' +
+      '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:6px; line-height:1.5;">Separate several with commas. If nothing needs attention no email goes out. Individual reminders can still override this.</div>' +
+      '<div style="margin-top:6px;">'+alertRows+'</div>';
+
+    // ---- column 3: fault overrides ----
+    var sevChip = function (sev, muted) {
+      var meta = RISK_META[sev] || RISK_META.medium;
+      var col = meta.color==="red" ? C.red : meta.color==="amber" ? C.amber : C.faint;
+      var bg  = meta.color==="red" ? C.redBg : meta.color==="amber" ? C.amberBg : C.track;
+      if (muted) { col = C.faint; bg = C.track; }
+      return '<span style="display:inline-block; font-size:9.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; ' +
+        'padding:2px 8px; border-radius:999px; background:'+bg+'; color:'+col+'; border:1px solid '+col+'55; white-space:nowrap;">'+
+        (muted?"Muted in alerts":meta.label)+'</span>';
+    };
+    var ovs = globalSettings.faultOverrides || [];
+    var th2 = 'padding:6px 8px; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:'+C.faint+'; text-align:left;';
+    var ovRows = ovs.map(function (o, i) {
+      return '<tr>' +
+        '<td style="padding:9px 8px; border-top:1px solid '+C.line+'; vertical-align:top;">' +
+          '<div style="font-size:12px; font-weight:650; color:'+C.ink+'; line-height:1.35;">'+esc(o.label || o.code)+'</div>' +
+          (o.label && o.code ? '<div style="font-size:10.5px; color:'+C.faint+'; margin-top:2px;">'+esc(o.code)+'</div>' : '') +
+        '</td>' +
+        '<td style="padding:9px 8px; border-top:1px solid '+C.line+'; vertical-align:top;">' +
+          sevChip(o.from) + ' <span style="color:'+C.faint+';">&rarr;</span> ' + sevChip(o.to, o.muted) +
+        '</td>' +
+        '<td style="padding:9px 8px; border-top:1px solid '+C.line+'; vertical-align:top; font-size:11.5px; color:'+C.soft+'; line-height:1.45;">' +
+          esc(o.note || "") +
+          '<div><button data-ovdel="'+i+'" style="margin-top:6px; border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:6px; padding:2px 9px; font-size:10.5px; font-weight:650; cursor:pointer;">Remove</button></div>' +
+        '</td></tr>';
+    }).join("");
+    var sevOpts = function (sel) {
+      return SEVERITIES.map(function (v) {
+        return '<option value="'+v+'"'+(v===sel?" selected":"")+'>'+(RISK_META[v]?RISK_META[v].label:v)+'</option>';
+      }).join("");
+    };
+    var ovPanel =
+      '<div style="overflow:auto;"><table style="width:100%; border-collapse:collapse;"><thead><tr>' +
+        '<th style="'+th2+'">Code</th><th style="'+th2+'">Severity</th><th style="'+th2+'">Why</th>' +
+      '</tr></thead><tbody>' +
+      (ovRows || '<tr><td colspan="3" style="padding:14px 8px; border-top:1px solid '+C.line+'; color:'+C.faint+'; font-size:12px;">No overrides. Faults use their Geotab severity, or the built-in rating when Geotab doesn\u2019t supply one.</td></tr>') +
+      '</tbody></table></div>' +
+      '<div style="margin-top:12px; padding-top:11px; border-top:1px solid '+C.line+';">' +
+        '<div style="font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:'+C.soft+'; margin-bottom:7px;">Add an override</div>' +
+        '<div style="display:grid; grid-template-columns:1fr 1fr; gap:7px;">' +
+          '<input id="ov-code" type="text" placeholder="Code or name match, e.g. SPN 3251" style="'+inputCss+' width:100%;">' +
+          '<input id="ov-label" type="text" placeholder="Label (optional)" style="'+inputCss+' width:100%;">' +
+          '<select id="ov-from" style="'+inputCss+' width:100%;">'+sevOpts("medium")+'</select>' +
+          '<select id="ov-to" style="'+inputCss+' width:100%;">'+sevOpts("high")+'</select>' +
+        '</div>' +
+        '<input id="ov-note" type="text" placeholder="Why \u2014 the reason this override exists" style="'+inputCss+' width:100%; margin-top:7px;">' +
+        '<label style="display:flex; align-items:center; gap:8px; margin-top:8px; cursor:pointer;">' +
+          '<input type="checkbox" id="ov-muted" style="width:15px;height:15px;">' +
+          '<span style="font-size:12px; color:'+C.soft+';">Mute in alerts (still shown on the vehicle)</span></label>' +
+        '<button id="ov-add" style="margin-top:9px; border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 14px; font-size:12.5px; font-weight:650; cursor:pointer;">Add override</button>' +
+      '</div>';
+
+    // ---- reset behaviour + config summary (existing) ----
+    var anyManual = !autoOil || !autoCustom;
     var banner = anyManual
-      ? '<div style="background:'+C.amberBg+'; border:1px solid '+C.amber+'55; border-radius:10px; padding:10px 13px; margin-bottom:10px; box-shadow:0 0 20px -8px '+C.amber+'99;">' +
-          '<span style="font-size:12.5px; font-weight:650; color:'+C.amber+';">Manual confirmation mode is on</span>' +
-          '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:3px; line-height:1.5;">Affected reminders will stay overdue until someone marks them serviced or done in the Add-In. You get one email per item when it first comes due, not one per run.</div>' +
+      ? '<div style="background:'+C.purpleBg+'; border:1px solid '+C.purple+'55; border-radius:10px; padding:10px 13px; margin-bottom:12px;">' +
+          '<span style="font-size:12.5px; font-weight:650; color:'+C.purple+';">Manual confirmation mode is on</span>' +
+          '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:3px; line-height:1.5;">Affected reminders stay overdue until someone marks them serviced or done. One email per item when it first comes due, not one per run.</div>' +
         '</div>'
       : "";
-
-    var autoPanel =
+    var resetPanel =
       toggleRow("st-oil", autoOil, "Auto-reset oil change reminders",
         "On: when a vehicle passes its interval the counter rolls forward automatically and tracking continues.<br>" +
-        "Off: the counter stays put and the vehicle keeps reading as overdue until someone clicks <b>Mark serviced now</b> on the Oil Reminders tab.") +
+        "Off: the counter stays put and the vehicle keeps reading as overdue until someone clicks <b>Mark serviced now</b> on the <b>Oil</b> tab.") +
       '<div style="height:1px; background:'+C.line+';"></div>' +
       toggleRow("st-custom", autoCustom, "Auto-reset custom reminders",
-        "On: a due custom reminder resets itself and starts the next cycle.<br>" +
-        "Off: it stays due until someone clicks <b>Mark done</b> on the Custom Reminders tab.");
-
-    var emailPanel =
-      '<div style="display:flex; align-items:center; gap:11px; flex-wrap:wrap;">' +
-        '<span id="st-default-email" style="flex:1; min-width:200px; font-size:13px; color:'+((globalSettings.defaultEmailTo)?C.ink:C.faint)+';">'+esc(globalSettings.defaultEmailTo || "(none set \u2014 falling back to the database address in DBn_EMAILTO)")+'</span>' +
-        '<button id="st-edit-email" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:600; cursor:pointer;">Edit</button>' +
-      '</div>';
+        "On: a due service reminder resets itself and starts the next cycle.<br>" +
+        "Off: it stays due until someone clicks <b>Mark done</b> on the <b>Service</b> tab.");
 
     var kv = function (k, v) {
       return '<div style="display:flex; justify-content:space-between; gap:12px; padding:5px 0; font-size:12.5px;">' +
         '<span style="color:'+C.soft+';">'+k+'</span><span style="color:'+C.ink+'; font-weight:600;">'+v+'</span></div>';
     };
     var rp = globalSettings.report;
+    var onCount = ALERT_DEFS.filter(function (d){ return alertOn(d.id); }).length;
     var statusPanel =
+      kv("Caution profile", cfg.label) +
       kv("Oil reminders", autoOil ? "Automatic" : "Manual confirmation") +
-      kv("Custom reminders", autoCustom ? "Automatic" : "Manual confirmation") +
+      kv("Service reminders", autoCustom ? "Automatic" : "Manual confirmation") +
+      kv("Alerts enabled", onCount + " of " + ALERT_DEFS.length) +
+      kv("Fault overrides", ovs.length) +
       kv("Scheduled report", rp && rp.enabled
         ? (rp.frequency === "weekly" ? "Weekly" : "Daily") + " at " + esc(rp.time || "07:00")
         : "Off") +
-      kv("Tracked assets", (cache.allDevices || []).length) +
-      kv("Custom reminders defined", (cache.customList || []).filter(function (r){ return r.details && r.details.deviceId; }).length);
+      kv("Tracked assets", (cache.allDevices || []).length);
 
     settingsEl.innerHTML =
       banner +
+      '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(310px, 1fr)); gap:11px; align-items:start; margin-bottom:11px;">' +
+        colPanel("How cautious should we be?", null, cautionPanel) +
+        colPanel("Alerts", null, alertsPanel) +
+        colPanel("Fault overrides", "Per code, fleet-wide", ovPanel) +
+      '</div>' +
       panel("Automatic reminder handling",
-        "Controls whether the automation script is allowed to reset a reminder on its own when it comes due. Changes save immediately and apply on the next run.",
-        autoPanel) +
-      panel("Default email recipients",
-        "Used by every reminder and report that doesn't set its own recipients. Comma-separated.",
-        emailPanel) +
+        "Controls whether the automation script may reset a reminder on its own when it comes due. Changes save immediately and apply on the next run.",
+        resetPanel) +
       panel("Current configuration", null, statusPanel);
+
+    // ---- wiring ----
+    settingsEl.querySelectorAll("[data-caution]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        var key = el.getAttribute("data-caution");
+        if (key === globalSettings.caution) return;
+        patchSettings({ caution: key })
+          .then(function () { toast("Caution profile: "+CAUTION[key].label); reloadAll(); })
+          .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
+      });
+    });
+
+    settingsEl.querySelectorAll("[data-switch]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var id = btn.getAttribute("data-switch").replace(/^alert:/, "");
+        var next = {};
+        var curA = globalSettings.alerts || defaultAlerts();
+        Object.keys(curA).forEach(function (k){ next[k] = curA[k]; });
+        next[id] = !alertOn(id);
+        patchSettings({ alerts: next })
+          .then(function () { renderSettings(devices); })
+          .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
+      });
+    });
+
+    var alertTo = $("st-alert-to");
+    if (alertTo) alertTo.addEventListener("change", function () {
+      patchSettings({ defaultEmailTo: alertTo.value.trim() || null })
+        .then(function () { toast("Alert recipients saved"); });
+    });
+
+    var ovAdd = $("ov-add");
+    if (ovAdd) ovAdd.addEventListener("click", function () {
+      var code = ($("ov-code")||{}).value || "";
+      if (!code.trim()) { toast("Enter a fault code or name to match"); return; }
+      var next = (globalSettings.faultOverrides || []).slice();
+      next.push({
+        code: code.trim(),
+        label: (($("ov-label")||{}).value || "").trim(),
+        from: ($("ov-from")||{}).value || "medium",
+        to: ($("ov-to")||{}).value || "high",
+        muted: !!(($("ov-muted")||{}).checked),
+        note: (($("ov-note")||{}).value || "").trim()
+      });
+      patchSettings({ faultOverrides: next })
+        .then(function () { toast("Override added"); reloadAll(); })
+        .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
+    });
+    settingsEl.querySelectorAll("[data-ovdel]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var i = Number(btn.getAttribute("data-ovdel"));
+        var next = (globalSettings.faultOverrides || []).slice();
+        next.splice(i, 1);
+        patchSettings({ faultOverrides: next }).then(function () { toast("Override removed"); reloadAll(); });
+      });
+    });
 
     var oilCb = $("st-oil");
     if (oilCb) oilCb.addEventListener("change", function () {
       var val = oilCb.checked;
       patchSettings({ autoResetOil: val })
-        .then(function () { toast(val ? "Oil reminders will auto-reset" : "Oil reminders now need manual confirmation"); renderSettings(devices); })
+        .then(function () { toast(val ? "Oil reminders will auto-reset" : "Oil reminders now need manual confirmation"); renderAll(); })
         .catch(function (e){ oilCb.checked = !val; toast("Save failed: "+(e&&e.message?e.message:e)); });
     });
     var cusCb = $("st-custom");
     if (cusCb) cusCb.addEventListener("change", function () {
       var val = cusCb.checked;
       patchSettings({ autoResetCustom: val })
-        .then(function () { toast(val ? "Custom reminders will auto-reset" : "Custom reminders now need manual confirmation"); renderSettings(devices); })
+        .then(function () { toast(val ? "Service reminders will auto-reset" : "Service reminders now need manual confirmation"); renderAll(); })
         .catch(function (e){ cusCb.checked = !val; toast("Save failed: "+(e&&e.message?e.message:e)); });
-    });
-    var editEmail = $("st-edit-email");
-    if (editEmail) editEmail.addEventListener("click", function () {
-      var input = window.prompt("Default email recipients for ALL reminders and reports (comma-separated):", globalSettings.defaultEmailTo || "");
-      if (input === null) return;
-      patchSettings({ defaultEmailTo: input.trim() || null })
-        .then(function () { toast("Default recipients saved"); renderSettings(devices); });
     });
   }
 
   // ---- theme + tabs --------------------------------------------------
   function $(id) { return document.getElementById(id); }
+  // MyGeotab injects add-in markup into its own page, so our <body> rules can
+  // be outranked by the host stylesheet and white gutters show around the app.
+  // Walk up from #root making each ancestor transparent, then paint the page
+  // itself dark. MyGeotab's own nav/header keeps its styling — we only touch
+  // the containers our content actually sits inside.
+  function paintHostDark() {
+    try {
+      var PAGE = "#05080b";
+      var GRAD = PAGE;
+      var node = rootEl ? rootEl.parentNode : null;
+      var guard = 0;
+      while (node && node.nodeType === 1 && guard++ < 40) {
+        if (node === document.body || node === document.documentElement) break;
+        node.style.background = "transparent";
+        node.style.backgroundColor = "transparent";
+        node.style.backgroundImage = "none";
+        node = node.parentNode;
+      }
+      if (document.body) {
+        document.body.style.background = GRAD;
+        document.body.style.backgroundAttachment = "fixed";
+        document.body.style.color = C.ink;
+      }
+      if (document.documentElement) document.documentElement.style.background = PAGE;
+      if (bodyEl && bodyEl !== document.body) {
+        bodyEl.style.background = "transparent";
+        bodyEl.style.color = C.ink;
+      }
+    } catch (e) { console.warn("host theming skipped:", e && e.message); }
+  }
+
   function applyTheme() {
     C = THEMES.dark;
+    paintHostDark();
     if (bodyEl) bodyEl.style.color = C.ink;
-    var eye = $("appEyebrow"); if (eye) eye.style.color = C.brand;
     var lu = $("lastUpdated"); if (lu) lu.style.color = C.faint;
-    var ttl = $("appTitle"); if (ttl) ttl.style.color = C.ink;
+    var sub = $("brandSub"); if (sub) sub.style.color = C.faint;
     var rb = $("refreshBtn");
     if (rb) {
-      rb.style.background = "linear-gradient(180deg,"+C.brand+",#d98e14)";
-      rb.style.border = "1px solid rgba(245,166,35,.5)";
-      rb.style.color = C.onBrand;
-      rb.style.boxShadow = "0 0 18px -4px rgba(245,166,35,.55)";
+      rb.style.background = C.card;
+      rb.style.border = "1px solid "+C.line;
+      rb.style.color = C.soft;
     }
     ["groupSelect","rangeSelect"].forEach(function (id) {
       var el = $(id); if (!el) return;
       el.style.background = C.card; el.style.border = "1px solid "+C.line; el.style.color = C.ink;
-      el.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,.03)";
     });
     var tabsWrap = $("tabs");
-    if (tabsWrap) {
-      tabsWrap.style.background = C.card;
-      tabsWrap.style.border = "1px solid "+C.line;
-      tabsWrap.style.boxShadow = "inset 0 1px 0 rgba(255,255,255,.035), 0 8px 22px -16px rgba(0,0,0,.9)";
-    }
+    if (tabsWrap) { tabsWrap.style.borderBottom = "1px solid "+C.line; tabsWrap.style.background = "transparent"; }
+    styleBanner();
     styleTabs();
   }
+
+  // Short plain-English line describing the tab you're on, in the accent bar
+  // style the rest of the suite uses.
+  var BANNERS = {
+    health:   ["Fleet Health.", "Every asset ranked worst first \u2014 faults, service state and device health, with a per-vehicle breakdown one tap away."],
+    oil:      ["Oil.", "Oil change tracking across the fleet. Set an interval once, apply it to a whole group, and confirm service when it's actually done."],
+    custom:   ["Service.", "Any recurring job you want tracked \u2014 brakes, tires, DOT, filters. Up to "+MAX_CUSTOM_PER_ASSET+" per asset, by mileage or by time."],
+    report:   ["Reporting.", "A scheduled Excel report of the whole fleet: status, mileage to next oil change, odometer, and when each service was last completed."],
+    settings: ["Setup.", "Fleet-wide behaviour \u2014 whether reminders reset themselves or wait for manual confirmation, plus default recipients."]
+  };
+  function styleBanner() {
+    var wrap = $("appBanner"), bar = $("appBannerBar"), txt = $("appBannerText");
+    if (!wrap || !txt) return;
+    var b = BANNERS[activeTab] || BANNERS.health;
+    wrap.style.background = C.card;
+    wrap.style.border = "1px solid "+C.line;
+    if (bar) bar.style.background = C.brand;
+    txt.innerHTML = '<span style="color:'+C.brand+'; font-weight:700;">'+b[0]+'</span> <span style="color:'+C.soft+';">'+b[1]+'</span>';
+  }
+
   function styleTabs() {
     if (!healthEl) return;
     document.querySelectorAll("#tabs button").forEach(function (b) {
       var on = b.getAttribute("data-tab")===activeTab;
-      b.style.background = on ? C.brandSoft : "transparent";
-      b.style.color = on ? C.brand : C.soft;
-      b.style.boxShadow = on ? "inset 0 0 0 1px rgba(245,166,35,.28), 0 0 16px -6px rgba(245,166,35,.55)" : "none";
+      b.style.background = "transparent";
+      b.style.color = on ? C.ink : C.soft;
+      b.style.borderBottom = on ? "2px solid "+C.brand : "2px solid transparent";
+      b.style.marginBottom = "-1px";
+    });
+    styleTabCounts();
+  }
+
+  // Small count pills on the tab labels, matching the rest of the suite.
+  function styleTabCounts() {
+    var counts = {
+      health: (cache.allDevices || []).length,
+      oil: (cache.allDevices || []).filter(function (d) {
+        var rec = cache.oilMap[d.id], det = rec && rec.details, odo = cache.odoMap[d.id];
+        if (!det || det.enabled === false || odo == null) return false;
+        var interval = det.intervalMiles || DEFAULT_INTERVAL_MILES;
+        return (interval - (odo - det.lastNotifiedMeters)/METERS_PER_UNIT) <= soonWindow(interval);
+      }).length,
+      custom: (cache.customList || []).filter(function (r){ return r.details && r.details.deviceId; }).length
+    };
+    document.querySelectorAll("#tabs [data-count]").forEach(function (el) {
+      var key = el.getAttribute("data-count");
+      var n = counts[key];
+      if (n == null || !n) { el.textContent = ""; el.removeAttribute("style"); return; }
+      var on = key === activeTab;
+      el.textContent = n;
+      el.setAttribute("style",
+        "display:inline-block; margin-left:7px; min-width:18px; text-align:center; padding:1px 6px; " +
+        "border-radius:999px; font-size:10.5px; font-weight:800; line-height:1.5; " +
+        "background:"+(on?C.brand:C.track)+"; color:"+(on?C.onBrand:C.soft)+";");
     });
   }
+
   var activeTab = "health";
   function switchTab(name) {
     activeTab = name;
@@ -2447,6 +2940,7 @@ geotab.addin.jackMaintenance = function () {
     if (customEl) customEl.style.display = name==="custom"?"":"none";
     if (reportEl) reportEl.style.display = name==="report"?"":"none";
     if (settingsEl) settingsEl.style.display = name==="settings"?"":"none";
+    styleBanner();
     styleTabs();
   }
 
@@ -2463,6 +2957,7 @@ geotab.addin.jackMaintenance = function () {
     if (customEl) renderCustom(devices, cache.odoMap, cache.customList);
     if (reportEl) renderReport(devices);
     if (settingsEl) renderSettings(devices);
+    styleTabCounts();
   }
 
   function reloadAll() {
