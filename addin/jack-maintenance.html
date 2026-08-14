@@ -1484,11 +1484,16 @@ geotab.addin.jackMaintenance = function () {
         oilLifeBadge = '<span style="font-size:12px; color:'+olc+'; font-weight:600; margin-right:12px;">Oil life '+Math.round(sensors.oilLife)+'%</span>';
       }
       var histHtml = "";
-      var hist = (det.history || []).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
+      // Wrap each entry with its original array index so a delete targets the
+      // right record after sorting. Never write onto the entry itself — these
+      // objects get persisted straight back into AddInData.
+      var hist = (det.history || []).map(function (e, i){ return { e:e, i:i }; })
+        .sort(function (a,b){ return new Date(b.e.date)-new Date(a.e.date); });
       if (hist.length) {
         var histId = "hist-"+cssId(device.id);
         var isOpen = !!expandedHistory[device.id];
-        var rowsHtml = hist.map(function (e) {
+        var rowsHtml = hist.map(function (w) {
+          var e = w.e;
           var mi = e.odoMeters!=null ? fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS : "—";
           var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
           var isAuto = e.source==="auto";
@@ -1497,8 +1502,14 @@ geotab.addin.jackMaintenance = function () {
             : '<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">manual</span>';
           var ol = (e.oilLife!=null) ? ' \u00b7 oil life was '+Math.round(e.oilLife)+'%' : '';
           var label = isAuto ? "auto-reset (service not confirmed)" : "marked serviced";
-          return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12.5px; color:'+C.soft+'; padding:5px 0; border-top:1px solid '+C.line+';">' +
-            '<span>'+dt+' \u00b7 '+label+ol+srcBadge+'</span><span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span></div>';
+          return '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12.5px; color:'+C.soft+'; padding:5px 0; border-top:1px solid '+C.line+';">' +
+            '<span>'+dt+' \u00b7 '+label+ol+srcBadge+'</span>' +
+            '<span style="display:flex; align-items:center; gap:9px;">' +
+              '<span style="color:'+C.ink+'; font-weight:600;">'+mi+'</span>' +
+              '<button data-histdel="'+esc(device.id)+'" data-histidx="'+w.i+'" title="Delete this entry" ' +
+                'style="border:1px solid '+C.line+'; background:transparent; color:'+C.faint+'; border-radius:6px; ' +
+                'padding:1px 7px; font-size:12px; line-height:1.4; cursor:pointer;">\u00d7</button>' +
+            '</span></div>';
         }).join("");
         histHtml = '<div style="margin-top:11px; padding-top:10px; border-top:1px solid '+C.line+';">' +
           '<div data-histtoggle="'+esc(device.id)+'" style="display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;">' +
@@ -1506,7 +1517,13 @@ geotab.addin.jackMaintenance = function () {
             '<span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Service history</span>' +
             '<span style="font-size:11.5px; color:'+C.faint+';">('+hist.length+')</span>' +
           '</div>' +
-          '<div id="'+histId+'" style="display:'+(isOpen?"block":"none")+'; margin-top:6px;">'+rowsHtml+'</div>' +
+          '<div id="'+histId+'" style="display:'+(isOpen?"block":"none")+'; margin-top:6px;">' + rowsHtml +
+            '<div style="display:flex; align-items:center; gap:9px; margin-top:9px; padding-top:8px; border-top:1px solid '+C.line+';">' +
+              '<span style="font-size:11px; color:'+C.faint+';">Deleting entries only edits the log \u2014 it does not move the current counter.</span>' +
+              '<span style="flex:1;"></span>' +
+              '<button data-histclear="'+esc(device.id)+'" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:7px; padding:3px 10px; font-size:11.5px; font-weight:650; cursor:pointer;">Clear history</button>' +
+            '</div>' +
+          '</div>' +
         '</div>';
       }
 
@@ -1635,6 +1652,47 @@ geotab.addin.jackMaintenance = function () {
         var id = el.getAttribute("data-histtoggle");
         expandedHistory[id] = !expandedHistory[id];
         renderOil(devices, odoMap, oilMap, sensorMap);
+      });
+    });
+
+    // delete a single service-history entry
+    oilEl.querySelectorAll('[data-histdel]').forEach(function (el) {
+      el.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var id = el.getAttribute("data-histdel");
+        var idx = Number(el.getAttribute("data-histidx"));
+        var rec = oilMap[id];
+        if (!rec || !rec.details || !rec.details.history) return;
+        var dev = null;
+        devices.forEach(function (d){ if (d.id === id) dev = d; });
+        if (!dev) return;
+        var det = rec.details;
+        if (idx < 0 || idx >= det.history.length) return;
+        det.history.splice(idx, 1);
+        persistOil(rec, det, dev, oilMap).then(function () {
+          toast("History entry deleted");
+          reloadAll();
+        }).catch(function (e){ toast("Delete failed: "+(e&&e.message?e.message:e)); });
+      });
+    });
+
+    // clear a vehicle's entire oil service history
+    oilEl.querySelectorAll('[data-histclear]').forEach(function (el) {
+      el.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var id = el.getAttribute("data-histclear");
+        var rec = oilMap[id];
+        if (!rec || !rec.details) return;
+        var dev2 = null;
+        devices.forEach(function (d){ if (d.id === id) dev2 = d; });
+        if (!dev2) return;
+        var nm = (rec.details.deviceName) || dev2.name || id;
+        if (!window.confirm("Delete the entire oil service history for "+nm+"?\n\nThe current interval and counter are not affected.")) return;
+        rec.details.history = [];
+        persistOil(rec, rec.details, dev2, oilMap).then(function () {
+          toast("Service history cleared");
+          reloadAll();
+        }).catch(function (e){ toast("Clear failed: "+(e&&e.message?e.message:e)); });
       });
     });
 
@@ -1775,19 +1833,34 @@ geotab.addin.jackMaintenance = function () {
       else { pillHtml=pill(fmt(Math.max(0,remaining))+" "+unit+" left",C.greenBg,C.green); fill=C.green; }
 
       var histHtml = "";
-      var hist = (d.history||[]).slice().sort(function (a,b){ return new Date(b.date)-new Date(a.date); });
+      // preserve original indices so deletes hit the right entry after sorting
+      // wrappers keep the original index; the stored entries stay untouched
+      var hist = (d.history||[]).map(function (e,i){ return { e:e, i:i }; })
+        .sort(function (a,b){ return new Date(b.e.date)-new Date(a.e.date); });
       if (hist.length) {
         histHtml = '<div style="margin-top:10px; padding-top:10px; border-top:1px solid '+C.line+';">' +
-          '<div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+'; margin-bottom:5px;">History</div>' +
-          hist.map(function (e){
+          '<div style="display:flex; align-items:center; gap:9px; margin-bottom:5px;">' +
+            '<span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">History</span>' +
+            '<span style="flex:1;"></span>' +
+            '<button data-crhistclear="1" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:6px; padding:1px 9px; font-size:10.5px; font-weight:650; cursor:pointer;">Clear</button>' +
+          '</div>' +
+          hist.map(function (w){
+            var e = w.e;
             var val = d.type==="days" ? (e.date?new Date(e.date).toLocaleDateString():"") : (e.odoMeters!=null?fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS:"—");
             var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
             var isAuto = e.source==="auto";
             var badge = isAuto
               ? '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.amberBg+'; color:'+C.amber+'; margin-left:6px;">auto</span>'
               : '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">done</span>';
-            return '<div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:'+C.soft+'; padding:3px 0;"><span>'+dt+' \u00b7 '+esc(d.label||"Reminder")+badge+'</span><span style="color:'+C.ink+';">'+val+'</span></div>';
-          }).join("") + '</div>';
+            return '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12px; color:'+C.soft+'; padding:3px 0;">' +
+              '<span>'+dt+' \u00b7 '+esc(d.label||"Reminder")+badge+'</span>' +
+              '<span style="display:flex; align-items:center; gap:8px;">' +
+                '<span style="color:'+C.ink+';">'+val+'</span>' +
+                '<button data-crhistdel="'+w.i+'" title="Delete this entry" style="border:1px solid '+C.line+'; background:transparent; color:'+C.faint+'; border-radius:5px; padding:0 6px; font-size:11.5px; line-height:1.5; cursor:pointer;">\u00d7</button>' +
+              '</span></div>';
+          }).join("") +
+          '<div style="font-size:10.5px; color:'+C.faint+'; margin-top:6px;">Deleting entries only edits the log \u2014 the reminder\u2019s counter is unchanged.</div>' +
+          '</div>';
       }
       var margin = insideBatch ? "margin:8px 0 0;" : "margin-bottom:8px;";
       var titleLine;
@@ -2027,6 +2100,28 @@ geotab.addin.jackMaintenance = function () {
       var enabledCb = cardEl.querySelector('[data-cr="enabled"]');
       var completeBtn = cardEl.querySelector('[data-cr="complete"]');
       var deleteBtn = cardEl.querySelector('[data-cr="delete"]');
+
+      // history: delete one entry, or clear the whole log for this reminder
+      cardEl.querySelectorAll('[data-crhistdel]').forEach(function (b) {
+        b.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var idx = Number(b.getAttribute("data-crhistdel"));
+          var d = rec.details;
+          if (!d.history || idx < 0 || idx >= d.history.length) return;
+          d.history.splice(idx, 1);
+          persistCustom(rec).then(function () { toast("History entry deleted"); reloadAll(); })
+            .catch(function (e){ toast("Delete failed: "+(e&&e.message?e.message:e)); });
+        });
+      });
+      var histClear = cardEl.querySelector('[data-crhistclear]');
+      if (histClear) histClear.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        var d = rec.details;
+        if (!window.confirm('Delete the entire history for "'+(d.label||"this reminder")+'"?\n\nThe reminder\u2019s counter is not affected.')) return;
+        d.history = [];
+        persistCustom(rec).then(function () { toast("History cleared"); reloadAll(); })
+          .catch(function (e){ toast("Clear failed: "+(e&&e.message?e.message:e)); });
+      });
       if (enabledCb) enabledCb.addEventListener("change", function () {
         rec.details.enabled = enabledCb.checked;
         persistCustom(rec).then(function () { toast("Updated"); });
@@ -2302,6 +2397,13 @@ geotab.addin.jackMaintenance = function () {
       var gBtnCss = canAdd ? addBtnCss
         : 'border:1px solid '+C.line+'; background:transparent; color:'+C.faint+'; border-radius:8px; padding:5px 12px; font-size:12.5px; font-weight:650; cursor:not-allowed;';
       actionBtn = '<button id="rp-addgroups"'+(canAdd?"":" disabled")+' style="'+gBtnCss+'">Add these '+selected.length+' asset'+(selected.length===1?"":"s")+' to the list</button>';
+    } else if (r.assetMode === "assets") {
+      // The ticked boxes already *are* the list here, so the action is to commit
+      // it — otherwise you'd have to scroll to Save schedule at the bottom.
+      var canSave = selected.length > 0;
+      var sBtnCss = canSave ? addBtnCss
+        : 'border:1px solid '+C.line+'; background:transparent; color:'+C.faint+'; border-radius:8px; padding:5px 12px; font-size:12.5px; font-weight:650; cursor:not-allowed;';
+      actionBtn = '<button id="rp-saveassets"'+(canSave?"":" disabled")+' style="'+sBtnCss+'">Save these '+selected.length+' asset'+(selected.length===1?"":"s")+'</button>';
     }
 
     var modeRow =
@@ -2339,7 +2441,13 @@ geotab.addin.jackMaintenance = function () {
             '<span style="flex:1;"></span>' +
             '<span style="font-size:11.5px; color:'+C.faint+'; font-variant-numeric:tabular-nums; flex:none;">'+count+'</span></label>';
       });
+      var checkedEmpty = (r.groupIds||[]).length > 0 && selected.length === 0;
       picker =
+        (checkedEmpty
+          ? '<div style="margin-top:11px; background:'+C.amberBg+'; border:1px solid '+C.amber+'55; border-radius:9px; padding:9px 12px; font-size:12px; color:'+C.amber+'; line-height:1.5;">' +
+            'The group'+((r.groupIds||[]).length===1?'':'s')+' you\u2019ve ticked contain no vehicles, so the report would be empty. ' +
+            '<span style="color:'+C.soft+';">The number on the right of each row is how many vehicles are in that branch \u2014 pick one showing more than 0.</span></div>'
+          : '') +
         '<div style="display:flex; gap:8px; align-items:center; margin-top:11px;">' +
           '<span style="font-size:11px; color:'+C.faint+';">Selecting a group includes its sub-groups. Counts are vehicles in that branch.</span>' +
           '<span style="flex:1;"></span>' +
@@ -2488,6 +2596,11 @@ geotab.addin.jackMaintenance = function () {
       toast("Added "+r.deviceIds.length+" asset"+(r.deviceIds.length===1?"":"s")+" from the selected group(s)");
       renderReport(devices);
     });
+    var saveAssets = $("rp-saveassets");
+    if (saveAssets) saveAssets.addEventListener("click", function () {
+      if (!selected.length) { toast("Tick at least one asset first"); return; }
+      commitReport("Saved \u2014 "+selected.length+" asset"+(selected.length===1?"":"s")+" in the report");
+    });
     var gclear = $("rp-gclear");
     if (gclear) gclear.addEventListener("click", function () { r.groupIds = []; renderReport(devices); });
 
@@ -2546,21 +2659,24 @@ geotab.addin.jackMaintenance = function () {
       renderReport(devices);
     });
 
-    var save = $("rp-save");
-    if (save) save.addEventListener("click", function () {
+    // Shared save path for both the footer Save button and the per-mode
+    // commit button, so they can't drift apart.
+    function commitReport(okMsg) {
       // Pull straight from the inputs — if the user typed and clicked Save
       // without the field ever firing 'change', the draft could be stale.
       var tEl = $("rp-time"), toEl = $("rp-to");
       if (tEl && tEl.value) r.time = tEl.value;
       if (toEl) r.recipients = toEl.value.trim();
       if (r.enabled && !(r.recipients||"").trim() && !(globalSettings.defaultEmailTo||"").trim()) {
-        toast("Set report recipients, or a fleet default in Settings, before enabling"); return;
+        toast("Set report recipients, or a fleet default in Setup, before enabling"); return;
       }
       if (r.enabled && !selectedReportDevices(all, r).length) { toast("No assets selected for the report"); return; }
       patchSettings({ report: JSON.parse(JSON.stringify(r)) })
-        .then(function () { toast(r.enabled ? "Report schedule saved" : "Report schedule saved (disabled)"); })
+        .then(function () { toast(okMsg || (r.enabled ? "Report schedule saved" : "Report schedule saved (disabled)")); })
         .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
-    });
+    }
+    var save = $("rp-save");
+    if (save) save.addEventListener("click", function () { commitReport(null); });
 
     var csv = $("rp-csv");
     if (csv) csv.addEventListener("click", function () {
