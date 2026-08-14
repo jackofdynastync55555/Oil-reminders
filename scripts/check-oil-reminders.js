@@ -231,8 +231,37 @@ const DEFAULT_SETTINGS = {
   defaultEmailTo: null,
   autoResetOil: true,     // false => oil reminders stay due until marked serviced
   autoResetCustom: true,  // false => custom reminders stay due until marked done
+  caution: "balanced",    // lean | balanced | safe — see CAUTION
+  alerts: null,           // { alertId: bool } from the Setup tab
+  faultOverrides: [],
   report: null,
 };
+
+// Mirrors CAUTION in the Add-In. Drives how early "due soon" fires.
+const CAUTION = {
+  lean:     { dueSoonPct: 10, dateDays: 7 },
+  balanced: { dueSoonPct: 20, dateDays: 14 },
+  safe:     { dueSoonPct: 30, dateDays: 30 },
+};
+function cautionOf(settings) {
+  return CAUTION[settings && settings.caution] || CAUTION.balanced;
+}
+// Distance window (in UNITS) at which a reminder counts as coming up.
+function soonWindowUnits(settings, intervalUnits) {
+  return Math.max(50, Math.round((intervalUnits || 5000) * cautionOf(settings).dueSoonPct / 100));
+}
+// Alert toggles from the Setup tab. Unknown/absent ids default to on, except
+// the two that ship off so we don't start emailing about them unannounced.
+const ALERT_DEFAULTS = {
+  undrivable: true, redLamp: true, safetyItem: true,
+  oilDue: true, oilSoon: true, serviceDue: true, serviceDone: true,
+  stopped: false, deviceFault: false,
+};
+function alertEnabled(settings, id) {
+  const a = (settings && settings.alerts) || {};
+  if (a[id] === undefined) return ALERT_DEFAULTS[id] !== undefined ? ALERT_DEFAULTS[id] : true;
+  return a[id] !== false;
+}
 
 async function getGlobalSettings(client) {
   try {
@@ -312,6 +341,21 @@ async function sendServicedConfirmation(label, emailTo, servicedVehicles) {
 // ---------------------------------------------------------------------------
 // Process ONE database
 // ---------------------------------------------------------------------------
+// Most recent completed service from a reminder's history, preferring manual
+// confirmations (someone actually did the work) over auto-resets.
+function lastServiceFrom(details) {
+  const hist = (details && details.history) || [];
+  if (!hist.length) return { date: null, odoMeters: null, source: null };
+  const sorted = hist.slice().sort((a, b) => new Date(b.date) - new Date(a.date));
+  const manual = sorted.find((h) => h.source === "manual");
+  const pick = manual || sorted[0];
+  return {
+    date: pick.date || null,
+    odoMeters: pick.odoMeters != null ? pick.odoMeters : null,
+    source: pick.source || null,
+  };
+}
+
 async function processAccount(account) {
   const label = account.label;
   console.log(`\n=== ${label} (${account.database}) ===`);
@@ -336,7 +380,7 @@ async function processAccount(account) {
 
   const dueDigest = [];     // reached interval — auto-reset + unconfirmed warning
   const awaitingOil = [];   // reached interval in manual mode — awaiting confirmation
-  const upcoming500 = [];   // 500 mi out
+  const upcoming500 = [];   // inside the caution profile's "coming up" window
   const serviced = [];      // vehicles flagged 'Mark serviced now' in the Add-In
   const odometerByDevice = {}; // for custom distance reminders
   const reportRows = [];    // one entry per vehicle, feeds the scheduled Excel report
@@ -385,6 +429,8 @@ async function processAccount(account) {
       reportRows.push({
         deviceId: device.id, name: device.name, status: "Reminders off",
         remainingUnits: null, odoUnits: odoMeters / METERS_PER_UNIT,
+        last: lastServiceFrom(details),
+        intervalUnits: details.intervalMiles || account.intervalMiles,
       });
       continue;
     }
@@ -395,7 +441,9 @@ async function processAccount(account) {
     const remainingMeters = intervalMeters - sinceLast;
     const remainingUnits = remainingMeters / METERS_PER_UNIT;
 
-    const STAGE_500 = 500 * METERS_PER_UNIT;
+    // "Coming up" window, from the caution profile in Setup rather than a
+    // hardcoded 500 mi, so Run-it-lean / Balanced / Play-it-safe actually move it.
+    const STAGE_500 = soonWindowUnits(settings, intervalMeters / METERS_PER_UNIT) * METERS_PER_UNIT;
     if (!details.stagesSent) details.stagesSent = {}; // { s500 }
 
     if (sinceLast >= intervalMeters) {
@@ -444,8 +492,10 @@ async function processAccount(account) {
       }
       reportRows.push({
         deviceId: device.id, name: device.name,
-        status: autoResetOil ? "Due now" : "Overdue — awaiting confirmation",
+        status: autoResetOil ? "Due now" : "Overdue \u2014 awaiting confirmation",
         remainingUnits: remainingUnits, odoUnits: odoMeters / METERS_PER_UNIT,
+        last: lastServiceFrom(details),
+        intervalUnits: intervalMeters / METERS_PER_UNIT,
       });
     } else if (remainingMeters <= STAGE_500 && !details.stagesSent.s500) {
       const oilLife = await getOilLifePct(client, device.id);
@@ -453,10 +503,12 @@ async function processAccount(account) {
       details.stagesSent.s500 = true;
       await saveState(client, existing, details);
       existing.details = details; // keep the map fresh — see note above
-      console.log(`    ${device.name}: 500-${UNITS} reminder sent`);
+      console.log(`    ${device.name}: coming-up reminder sent (within ${Math.round(STAGE_500 / METERS_PER_UNIT)} ${UNITS})`);
       reportRows.push({
         deviceId: device.id, name: device.name, status: "Due soon",
         remainingUnits: remainingUnits, odoUnits: odoMeters / METERS_PER_UNIT,
+        last: lastServiceFrom(details),
+        intervalUnits: intervalMeters / METERS_PER_UNIT,
       });
     } else {
       console.log(`    ${device.name}: ${remainingUnits.toFixed(0)} ${UNITS} until due`);
@@ -464,6 +516,8 @@ async function processAccount(account) {
         deviceId: device.id, name: device.name,
         status: remainingMeters <= STAGE_500 ? "Due soon" : "On track",
         remainingUnits: remainingUnits, odoUnits: odoMeters / METERS_PER_UNIT,
+        last: lastServiceFrom(details),
+        intervalUnits: intervalMeters / METERS_PER_UNIT,
       });
     }
   }
@@ -500,27 +554,40 @@ async function processAccount(account) {
     if (to === "__none__") { console.log(`  ${items.length} serviced confirmation(s) pending but no recipient resolved`); continue; }
     await sendServicedConfirmation(label, to, items);
   }
+  if (!alertEnabled(settings, "oilSoon") && upcoming500.length) {
+    console.log(`  ${upcoming500.length} oil-coming-up alert(s) suppressed (alert turned off in Setup)`);
+    upcoming500.length = 0;
+  }
   for (const [to, items] of bucketByRecipient(upcoming500, globalDefaultEmail, account.emailTo)) {
     if (to === "__none__") { console.log(`  ${items.length} upcoming reminder(s) but no recipient resolved`); continue; }
     await sendStageEmail(label, to, "500", items);
   }
-  for (const [to, items] of bucketByRecipient(dueDigest, globalDefaultEmail, account.emailTo)) {
-    if (to === "__none__") { console.log(`  ${items.length} due reminder(s) but no recipient resolved`); continue; }
-    await sendDueEmail(label, to, items);
-  }
-  for (const [to, items] of bucketByRecipient(awaitingOil, globalDefaultEmail, account.emailTo)) {
-    if (to === "__none__") { console.log(`  ${items.length} overdue reminder(s) but no recipient resolved`); continue; }
-    await sendAwaitingConfirmationEmail(label, to, items);
+  // Alert toggles (Setup tab) decide which of these actually go out. The state
+  // changes above still happen either way — muting an alert stops the email,
+  // it does not stop the tracking.
+  if (!alertEnabled(settings, "oilDue")) {
+    if (dueDigest.length || awaitingOil.length) {
+      console.log(`  ${dueDigest.length + awaitingOil.length} oil-due alert(s) suppressed (alert turned off in Setup)`);
+    }
+  } else {
+    for (const [to, items] of bucketByRecipient(dueDigest, globalDefaultEmail, account.emailTo)) {
+      if (to === "__none__") { console.log(`  ${items.length} due reminder(s) but no recipient resolved`); continue; }
+      await sendDueEmail(label, to, items);
+    }
+    for (const [to, items] of bucketByRecipient(awaitingOil, globalDefaultEmail, account.emailTo)) {
+      if (to === "__none__") { console.log(`  ${items.length} overdue reminder(s) but no recipient resolved`); continue; }
+      await sendAwaitingConfirmationEmail(label, to, items);
+    }
   }
   if (!upcoming500.length && !dueDigest.length && !awaitingOil.length) {
     console.log(`  No oil reminders due this run.`);
   }
 
   // ---- Custom reminders (distance or time) --------------------------
-  let customReportRows = {};
+  let customReportRows = { status: {}, lines: [] };
   try {
     customReportRows = await processCustomReminders(
-      client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom
+      client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom, settings
     );
   } catch (e) {
     console.error(`  Custom reminders error on ${label}: ${e.message}`);
@@ -563,15 +630,16 @@ async function sendAwaitingConfirmationEmail(label, to, vehicles) {
   console.log(`  Awaiting-confirmation email sent to ${to} (${vehicles.length})`);
 }
 
-// 500/100 upcoming reminder email
+// Advance "coming up" reminder. The window comes from the caution profile in
+// the Setup tab, so the heading quotes the widest distance in the batch rather
+// than a fixed number.
 async function sendStageEmail(label, to, stage, vehicles) {
   const oilTxt = (v) => v.oilLife != null ? ` — oil life remaining: ${Math.round(v.oilLife)}%` : "";
   const lines = vehicles.map(
     (v) => `\u2022 ${v.name} — ${Math.round(v.remainingUnits)} ${UNITS} until oil change due${oilTxt(v)}`
   );
-  const heading = stage === "500"
-    ? `Oil service coming up (within 500 ${UNITS}):`
-    : `Oil service due soon (within 250 ${UNITS}):`;
+  const widest = Math.max(...vehicles.map((v) => Math.round(v.remainingUnits)));
+  const heading = `Oil service coming up (within ${widest.toLocaleString()} ${UNITS}):`;
   const body = [heading, ``, ...lines, ``,
     `This is an advance reminder — no action needed in Geotab.`,
     `The system will track these automatically.`,
@@ -638,7 +706,7 @@ async function sendCustomCompletedEmail(label, to, items) {
 // off in Settings) resets their baseline.
 // Returns { deviceId: { due:n, soon:n } } so the report can fold custom
 // reminders into each asset's status.
-async function processCustomReminders(client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom) {
+async function processCustomReminders(client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom, settings) {
   const records = await client.call("Get", {
     typeName: "AddInData",
     search: { addInId: CUSTOM_ADD_IN_ID },
@@ -646,8 +714,10 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
 
   if (globalDefaultEmail === undefined) globalDefaultEmail = null;
   if (autoResetCustom === undefined) autoResetCustom = true;
+  if (!settings) settings = DEFAULT_SETTINGS;
 
-  const byDeviceStatus = {}; // deviceId -> { due, soon }
+  const byDeviceStatus = {};   // deviceId -> { due, soon }
+  const serviceLines = [];     // one per custom reminder, for the report's Services sheet
   function noteStatus(deviceId, key) {
     if (!byDeviceStatus[deviceId]) byDeviceStatus[deviceId] = { due: 0, soon: 0 };
     byDeviceStatus[deviceId][key]++;
@@ -698,7 +768,23 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
       });
     }
 
-    if (d.enabled === false) continue;
+    if (d.enabled === false) {
+      const lastOff = lastServiceFrom(d);
+      serviceLines.push({
+        deviceId: d.deviceId,
+        device: d.deviceName || d.deviceId,
+        service: d.label || "Reminder",
+        type: d.type === "days" ? "Time" : "Distance",
+        interval: d.interval,
+        unit: d.type === "days" ? "days" : UNITS,
+        remaining: null,
+        status: "Off",
+        lastDate: lastOff.date,
+        lastOdoMeters: lastOff.odoMeters,
+        lastSource: lastOff.source,
+      });
+      continue;
+    }
 
     let isDue = false;
     let isSoon = false;
@@ -707,18 +793,47 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
       const start = d.baselineDate ? new Date(d.baselineDate).getTime() : Date.now();
       const elapsedDays = (Date.now() - start) / 86400000;
       if (elapsedDays >= d.interval) { isDue = true; atText = `${Math.round(elapsedDays)} days elapsed`; }
-      else if (elapsedDays >= d.interval * 0.85) isSoon = true;
+      else if (d.interval - elapsedDays <= cautionOf(settings).dateDays) isSoon = true;
     } else {
       const odo = odometerByDevice ? odometerByDevice[d.deviceId] : null;
       if (odo != null && d.baselineMeters != null) {
         const since = (odo - d.baselineMeters) / METERS_PER_UNIT;
         if (since >= d.interval) { isDue = true; atText = `${Math.round(odo / METERS_PER_UNIT).toLocaleString()} ${UNITS}`; }
-        else if (since >= d.interval * 0.85) isSoon = true;
+        else if (d.interval - since <= soonWindowUnits(settings, d.interval)) isSoon = true;
       }
     }
 
     if (isDue) noteStatus(d.deviceId, "due");
     else if (isSoon) noteStatus(d.deviceId, "soon");
+
+    // Snapshot for the report before any baseline reset below changes it.
+    (function () {
+      const last = lastServiceFrom(d);
+      let remaining = null;
+      if (d.type === "days") {
+        const start = d.baselineDate ? new Date(d.baselineDate).getTime() : null;
+        if (start) remaining = Math.round(d.interval - (Date.now() - start) / 86400000);
+      } else {
+        const o = odometerByDevice ? odometerByDevice[d.deviceId] : null;
+        if (o != null && d.baselineMeters != null) {
+          remaining = Math.round(d.interval - (o - d.baselineMeters) / METERS_PER_UNIT);
+        }
+      }
+      serviceLines.push({
+        deviceId: d.deviceId,
+        device: d.deviceName || d.deviceId,
+        service: d.label || "Reminder",
+        type: d.type === "days" ? "Time" : "Distance",
+        interval: d.interval,
+        unit: d.type === "days" ? "days" : UNITS,
+        remaining: remaining,
+        status: isDue ? (autoResetCustom ? "Due now" : "Due \u2014 awaiting confirmation")
+              : isSoon ? "Due soon" : "On track",
+        lastDate: last.date,
+        lastOdoMeters: last.odoMeters,
+        lastSource: last.source,
+      });
+    })();
 
     if (isDue) {
       // In manual mode a due reminder emails once and then sits there until
@@ -757,6 +872,11 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
   }
 
   // ---- completion confirmations ("Mark done" in the Add-In) -----------
+  if (!alertEnabled(settings, "serviceDone")) {
+    const n = Object.keys(completedByRecipient).length;
+    if (n) console.log(`  Completion confirmations suppressed (alert turned off in Setup)`);
+    for (const k of Object.keys(completedByRecipient)) delete completedByRecipient[k];
+  }
   const completedKeys = Object.keys(completedByRecipient);
   for (const key of completedKeys) {
     const items = completedByRecipient[key];
@@ -767,8 +887,13 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
     await sendCustomCompletedEmail(label, key, items);
   }
 
+  if (!alertEnabled(settings, "serviceDue")) {
+    const n = Object.values(byRecipient).reduce((a, v) => a + v.length, 0);
+    if (n) console.log(`  ${n} service-due alert(s) suppressed (alert turned off in Setup)`);
+    for (const k of Object.keys(byRecipient)) delete byRecipient[k];
+  }
   const recipientKeys = Object.keys(byRecipient);
-  if (!recipientKeys.length) { console.log(`  No custom reminders due.`); return byDeviceStatus; }
+  if (!recipientKeys.length) { console.log(`  No custom reminders due.`); return { status: byDeviceStatus, lines: serviceLines }; }
 
   for (const key of recipientKeys) {
     const items = byRecipient[key];
@@ -801,7 +926,7 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
     console.log(`  Custom reminder email sent to ${key} (${items.length})`);
   }
 
-  return byDeviceStatus;
+  return { status: byDeviceStatus, lines: serviceLines };
 }
 
 // ---------------------------------------------------------------------------
@@ -914,63 +1039,80 @@ function colName(n) { // 1 -> A
  *       or { v, style } where style is one of: header, num, text.
  * Returns a Buffer containing a valid .xlsx workbook.
  */
-function buildWorkbook(sheetName, columns, rows) {
-  // ---- styles: 0 default, 1 header, 2 integer w/ thousands, 3 wrapped text
+/**
+ * sheets: [{ name, columns:[{width}], rows:[[cell,...]] }]
+ * Cell values may be string, number, null, or { v, s } where s is a style id:
+ *   0 default, 1 header, 2 integer w/ thousands, 3 bordered text, 4 bold group row
+ * Returns a Buffer containing a valid .xlsx workbook.
+ */
+function buildWorkbook(sheets) {
   const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0"/></numFmts>
-<fonts count="2">
+<fonts count="3">
 <font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>
 <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><color rgb="FF111827"/><name val="Calibri"/></font>
 </fonts>
-<fills count="3">
+<fills count="4">
 <fill><patternFill patternType="none"/></fill>
 <fill><patternFill patternType="gray125"/></fill>
 <fill><patternFill patternType="solid"><fgColor rgb="FF1F2937"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFF3F4F6"/><bgColor indexed="64"/></patternFill></fill>
 </fills>
 <borders count="2">
 <border><left/><right/><top/><bottom/><diagonal/></border>
 <border><left/><right/><top/><bottom style="thin"><color rgb="FFD0D7DE"/></bottom><diagonal/></border>
 </borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="4">
+<cellXfs count="5">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"><alignment vertical="center"/></xf>
 <xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>
+<xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
 
-  const cols = columns.map((c, i) =>
-    `<col min="${i + 1}" max="${i + 1}" width="${c.width || 18}" customWidth="1"/>`).join("");
+  const usedNames = {};
+  const parts = sheets.map((sh, idx) => {
+    const cols = sh.columns.map((c, i) =>
+      `<col min="${i + 1}" max="${i + 1}" width="${c.width || 18}" customWidth="1"/>`).join("");
 
-  const rowXml = rows.map((cells, ri) => {
-    const r = ri + 1;
-    const cellXml = cells.map((cell, ci) => {
-      const ref = colName(ci + 1) + r;
-      let v = cell, style = 0;
-      if (cell && typeof cell === "object" && !Array.isArray(cell)) { v = cell.v; style = cell.s || 0; }
-      if (v === null || v === undefined || v === "") return `<c r="${ref}" s="${style}"/>`;
-      if (typeof v === "number" && isFinite(v)) return `<c r="${ref}" s="${style}"><v>${v}</v></c>`;
-      return `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
+    const rowXml = sh.rows.map((cells, ri) => {
+      const r = ri + 1;
+      const cellXml = cells.map((cell, ci) => {
+        const ref = colName(ci + 1) + r;
+        let v = cell, style = 0;
+        if (cell && typeof cell === "object" && !Array.isArray(cell)) { v = cell.v; style = cell.s || 0; }
+        if (v === null || v === undefined || v === "") return `<c r="${ref}" s="${style}"/>`;
+        if (typeof v === "number" && isFinite(v)) return `<c r="${ref}" s="${style}"><v>${v}</v></c>`;
+        return `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(v)}</t></is></c>`;
+      }).join("");
+      return `<row r="${r}"${ri === 0 ? ' ht="20" customHeight="1"' : ""}>${cellXml}</row>`;
     }).join("");
-    return `<row r="${r}"${ri === 0 ? ' ht="20" customHeight="1"' : ""}>${cellXml}</row>`;
-  }).join("");
 
-  const lastCol = colName(columns.length);
-  const sheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    const lastCol = colName(sh.columns.length);
+    const lastRow = Math.max(sh.rows.length, 1);
+    const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<sheetPr><outlinePr summaryBelow="1" summaryRight="1"/></sheetPr>
-<dimension ref="A1:${lastCol}${Math.max(rows.length, 1)}"/>
-<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<dimension ref="A1:${lastCol}${lastRow}"/>
+<sheetViews><sheetView${idx === 0 ? ' tabSelected="1"' : ""} workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
 <sheetFormatPr defaultRowHeight="15"/>
 <cols>${cols}</cols>
 <sheetData>${rowXml}</sheetData>
-<autoFilter ref="A1:${lastCol}${Math.max(rows.length, 1)}"/>
+<autoFilter ref="A1:${lastCol}${lastRow}"/>
 </worksheet>`;
 
-  const safeName = xmlEsc(String(sheetName || "Sheet1").slice(0, 31).replace(/[\\\/\?\*\[\]:]/g, "-"));
+    // Excel rejects duplicate or over-long sheet names, and a few characters outright.
+    let name = String(sh.name || `Sheet${idx + 1}`).replace(/[\\\/\?\*\[\]:]/g, "-").slice(0, 31) || `Sheet${idx + 1}`;
+    let n = 2;
+    while (usedNames[name.toLowerCase()]) { const suffix = ` (${n++})`; name = name.slice(0, 31 - suffix.length) + suffix; }
+    usedNames[name.toLowerCase()] = true;
+
+    return { name, xml, file: `xl/worksheets/sheet${idx + 1}.xml` };
+  });
 
   const files = [
     { name: "[Content_Types].xml", data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -978,7 +1120,7 @@ function buildWorkbook(sheetName, columns, rows) {
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+${parts.map((p, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("\n")}
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>`, "utf8") },
     { name: "_rels/.rels", data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -987,15 +1129,15 @@ function buildWorkbook(sheetName, columns, rows) {
 </Relationships>`, "utf8") },
     { name: "xl/workbook.xml", data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-<sheets><sheet name="${safeName}" sheetId="1" r:id="rId1"/></sheets>
+<sheets>${parts.map((p, i) => `<sheet name="${xmlEsc(p.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets>
 </workbook>`, "utf8") },
     { name: "xl/_rels/workbook.xml.rels", data: Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+${parts.map((p, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("\n")}
+<Relationship Id="rId${parts.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>`, "utf8") },
     { name: "xl/styles.xml", data: Buffer.from(styles, "utf8") },
-    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(sheet, "utf8") },
+    ...parts.map((p) => ({ name: p.file, data: Buffer.from(p.xml, "utf8") })),
   ];
 
   return zip(files);
@@ -1062,15 +1204,47 @@ function reportIsDue(report, now) {
   return { due: true, dateKey };
 }
 
+// Group id -> child ids, so a selected parent group can be expanded to
+// everything beneath it. The Add-In stores only the groups the user ticked.
+async function getGroupTree(client) {
+  try {
+    const groups = await client.call("Get", { typeName: "Group" });
+    const children = {};
+    (groups || []).forEach((g) => {
+      (g.children || []).forEach((c) => {
+        if (!children[g.id]) children[g.id] = [];
+        children[g.id].push(c.id);
+      });
+    });
+    return children;
+  } catch (e) {
+    console.log(`  Could not read group tree: ${e.message}`);
+    return {};
+  }
+}
+
+function expandGroups(children, ids) {
+  const out = new Set();
+  const stack = (ids || []).slice();
+  while (stack.length) {
+    const g = stack.pop();
+    if (out.has(g)) continue;
+    out.add(g);
+    (children[g] || []).forEach((c) => stack.push(c));
+  }
+  return out;
+}
+
 // Which assets belong in the report, per the Reporting tab's selection.
-function selectReportDevices(devices, report) {
+function selectReportDevices(devices, report, groupChildren) {
   if (!report || report.assetMode === "all" || !report.assetMode) return devices;
   if (report.assetMode === "assets") {
     const want = new Set(report.deviceIds || []);
     return devices.filter((d) => want.has(d.id));
   }
   if (report.assetMode === "groups") {
-    const want = new Set(report.groupIds || []);
+    // Selecting a parent group includes its sub-groups, matching the Add-In.
+    const want = expandGroups(groupChildren || {}, report.groupIds || []);
     return devices.filter((d) => (d.groups || []).some((g) => want.has(g.id)));
   }
   return devices;
@@ -1090,34 +1264,111 @@ function combinedStatus(row, custom) {
   return `${base} (${extras.join(", ")})`;
 }
 
-function buildReportWorkbook(label, rows, custom, generatedAt) {
-  const header = [
+function fmtDate(iso) {
+  if (!iso) return "\u2014";
+  const d = new Date(iso);
+  if (isNaN(d)) return "\u2014";
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function buildReportWorkbook(label, rows, customStatus, serviceLines, generatedAt) {
+  const sorted = rows.slice()
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
+
+  // ---- Sheet 1: fleet summary, one row per asset ------------------------
+  const summaryHeader = [
     { v: "Asset", s: 1 },
     { v: "Status", s: 1 },
     { v: `Mileage remaining before oil change (${UNITS})`, s: 1 },
     { v: `Odometer reading (${UNITS})`, s: 1 },
+    { v: "Last oil change", s: 1 },
+    { v: `Odometer at last oil change (${UNITS})`, s: 1 },
   ];
-  const body = rows
-    .slice()
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }))
-    .map((r) => [
+  const summaryBody = sorted.map((r) => {
+    const last = r.last || {};
+    return [
       { v: r.name, s: 3 },
-      { v: combinedStatus(r, custom), s: 3 },
-      r.remainingUnits == null
+      { v: combinedStatus(r, customStatus), s: 3 },
+      r.remainingUnits == null ? { v: "\u2014", s: 3 } : { v: Math.round(r.remainingUnits), s: 2 },
+      r.odoUnits == null ? { v: "\u2014", s: 3 } : { v: Math.round(r.odoUnits), s: 2 },
+      { v: fmtDate(last.date), s: 3 },
+      last.odoMeters == null
         ? { v: "\u2014", s: 3 }
-        : { v: Math.round(r.remainingUnits), s: 2 },
-      r.odoUnits == null
-        ? { v: "\u2014", s: 3 }
-        : { v: Math.round(r.odoUnits), s: 2 },
-    ]);
+        : { v: Math.round(last.odoMeters / METERS_PER_UNIT), s: 2 },
+    ];
+  });
 
-  const columns = [{ width: 34 }, { width: 34 }, { width: 34 }, { width: 22 }];
-  const sheetName = (label || "Fleet").slice(0, 24) + " report";
-  return {
-    buffer: buildWorkbook(sheetName, columns, [header, ...body]),
-    count: body.length,
-    generatedAt,
-  };
+  // ---- Sheet 2: every service on every asset ----------------------------
+  // Oil change first for each asset, then its custom reminders, so each
+  // vehicle reads as a block.
+  const serviceHeader = [
+    { v: "Asset", s: 1 },
+    { v: "Service", s: 1 },
+    { v: "Type", s: 1 },
+    { v: "Interval", s: 1 },
+    { v: "Status", s: 1 },
+    { v: "Remaining", s: 1 },
+    { v: "Last completed", s: 1 },
+    { v: `Odometer at completion (${UNITS})`, s: 1 },
+    { v: "Confirmed by", s: 1 },
+  ];
+
+  const linesByDevice = {};
+  (serviceLines || []).forEach((l) => {
+    if (!linesByDevice[l.deviceId]) linesByDevice[l.deviceId] = [];
+    linesByDevice[l.deviceId].push(l);
+  });
+
+  const serviceBody = [];
+  sorted.forEach((r) => {
+    const last = r.last || {};
+    // the oil change line, built from the oil reminder record
+    serviceBody.push([
+      { v: r.name, s: 4 },
+      { v: "Oil change", s: 4 },
+      { v: "Distance", s: 4 },
+      { v: r.intervalUnits ? `${Math.round(r.intervalUnits).toLocaleString()} ${UNITS}` : "\u2014", s: 4 },
+      { v: r.status, s: 4 },
+      r.remainingUnits == null
+        ? { v: "\u2014", s: 4 }
+        : { v: `${Math.round(r.remainingUnits).toLocaleString()} ${UNITS}`, s: 4 },
+      { v: fmtDate(last.date), s: 4 },
+      last.odoMeters == null ? { v: "\u2014", s: 4 } : { v: Math.round(last.odoMeters / METERS_PER_UNIT), s: 4 },
+      { v: last.source === "manual" ? "Marked serviced" : last.source === "auto" ? "Auto-reset" : "\u2014", s: 4 },
+    ]);
+    // then each custom reminder defined on that asset
+    (linesByDevice[r.deviceId] || [])
+      .slice()
+      .sort((a, b) => String(a.service).localeCompare(String(b.service)))
+      .forEach((l) => {
+        serviceBody.push([
+          { v: r.name, s: 3 },
+          { v: l.service, s: 3 },
+          { v: l.type, s: 3 },
+          { v: `${Math.round(l.interval).toLocaleString()} ${l.unit}`, s: 3 },
+          { v: l.status, s: 3 },
+          l.remaining == null ? { v: "\u2014", s: 3 } : { v: `${l.remaining.toLocaleString()} ${l.unit}`, s: 3 },
+          { v: fmtDate(l.lastDate), s: 3 },
+          l.lastOdoMeters == null ? { v: "\u2014", s: 3 } : { v: Math.round(l.lastOdoMeters / METERS_PER_UNIT), s: 2 },
+          { v: l.lastSource === "manual" ? "Marked done" : l.lastSource === "auto" ? "Auto-reset" : "\u2014", s: 3 },
+        ]);
+      });
+  });
+
+  const buffer = buildWorkbook([
+    {
+      name: "Fleet Summary",
+      columns: [{ width: 32 }, { width: 34 }, { width: 34 }, { width: 22 }, { width: 18 }, { width: 30 }],
+      rows: [summaryHeader, ...summaryBody],
+    },
+    {
+      name: "Service History",
+      columns: [{ width: 32 }, { width: 24 }, { width: 11 }, { width: 15 }, { width: 30 }, { width: 15 }, { width: 18 }, { width: 28 }, { width: 17 }],
+      rows: [serviceHeader, ...serviceBody],
+    },
+  ]);
+
+  return { buffer, count: summaryBody.length, serviceCount: serviceBody.length, generatedAt };
 }
 
 async function maybeSendReport(client, account, label, settingsRec, reportRows, customStatus, devices) {
@@ -1143,7 +1394,8 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
     return;
   }
 
-  const selected = selectReportDevices(devices, report);
+  const groupChildren = report.assetMode === "groups" ? await getGroupTree(client) : {};
+  const selected = selectReportDevices(devices, report, groupChildren);
   const wanted = new Set(selected.map((d) => d.id));
   const rows = reportRows.filter((r) => wanted.has(r.deviceId));
   if (!rows.length) {
@@ -1153,7 +1405,7 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
 
   const tz = report.timezone || "America/New_York";
   const stamp = zonedParts(now, tz).dateKey;
-  const { buffer, count } = buildReportWorkbook(label, rows, customStatus, now);
+  const { buffer, count, serviceCount } = buildReportWorkbook(label, rows, customStatus.status || {}, customStatus.lines || [], now);
   const fileLabel = String(label || "fleet").replace(/[^a-zA-Z0-9._-]+/g, "-").toLowerCase();
   const filename = `fleet-maintenance-${fileLabel}-${stamp}.xlsx`;
 
@@ -1161,11 +1413,16 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
   const body = [
     `${isTest ? "Test" : freqText} fleet maintenance report${label ? " for " + label : ""}.`,
     ``,
-    `${count} asset${count === 1 ? "" : "s"} included.`,
+    `${count} asset${count === 1 ? "" : "s"} included, ${serviceCount} service line${serviceCount === 1 ? "" : "s"}.`,
     `Generated ${now.toLocaleString("en-US", { timeZone: tz })} (${tz}).`,
     ``,
-    `The attached spreadsheet lists each asset with its current service status,`,
-    `mileage remaining before its next oil change, and odometer reading.`,
+    `Sheet 1 (Fleet Summary): each asset with its current status, mileage`,
+    `remaining before its next oil change, odometer reading, and when the last`,
+    `oil change was completed and at what mileage.`,
+    ``,
+    `Sheet 2 (Service History): every service tracked on every asset \u2014 the oil`,
+    `change plus each custom reminder \u2014 with its interval, status, and when it`,
+    `was last completed.`,
     ``,
     `— Automated report from Dynasty Communications fleet monitoring`,
   ].join("\n");
