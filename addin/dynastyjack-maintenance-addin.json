@@ -1,0 +1,16 @@
+{
+    "name": "DynastyJack Maintenance",
+    "supportEmail": "support@dynastync.com",
+    "version": "2.2.0",
+    "items": [
+        {
+            "url": "https://jackofdynastync55555.github.io/Oil-reminders/addin/jack-maintenance.html",
+            "path": "EngineMaintenanceLink/",
+            "category": "MaintenanceId",
+            "menuName": {
+                "en": "DynastyJack Maintenance"
+            }
+        }
+    ],
+    "isSigned": false
+}
