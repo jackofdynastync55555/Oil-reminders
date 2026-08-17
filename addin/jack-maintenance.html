@@ -178,7 +178,7 @@ geotab.addin.jackMaintenance = function () {
     enabled:false, frequency:"daily", dayOfWeek:1, time:"07:00",
     timezone:"America/New_York", recipients:"",
     assetMode:"all", groupIds:[], deviceIds:[],
-    testPending:false, lastSentKey:null, lastSentAt:null
+    testPending:false, sendNow:false, sendNowAt:null, lastSentKey:null, lastSentAt:null
   };
   var DEFAULT_SETTINGS = {
     settingsKey:"global",
@@ -216,6 +216,7 @@ geotab.addin.jackMaintenance = function () {
   }
   var reportDraft = null;   // working copy of globalSettings.report while editing
   var assetFilterText = ""; // search box in the Reporting asset picker
+  var showEmptyGroups = false; // Reporting: reveal groups that hold no vehicles
 
   // ---- utils ---------------------------------------------------------
   function toast(msg) {
@@ -2345,6 +2346,11 @@ geotab.addin.jackMaintenance = function () {
 
   function renderReport(devices) {
     if (!reportEl) return;
+    // Ticking a box re-renders the panel, which would otherwise throw the list
+    // back to the top. Grab the scroll offset off the old DOM first.
+    var prevScroll = null;
+    var prevScrollEl = $("rp-scroll");
+    if (prevScrollEl) prevScroll = prevScrollEl.scrollTop;
     if (!reportDraft) reportDraft = JSON.parse(JSON.stringify(globalSettings.report || DEFAULT_REPORT));
     var r = reportDraft;
     var all = cache.allDevices || devices || [];
@@ -2427,34 +2433,42 @@ geotab.addin.jackMaintenance = function () {
         'Use the button above if you\u2019d rather freeze the list and remove a few by hand.</div>';
     } else if (r.assetMode === "groups") {
       var gsel = {}; (r.groupIds||[]).forEach(function (id){ gsel[id]=true; });
+      // Most Geotab databases carry a pile of driver/activity classification
+      // groups that contain no vehicles at all. Ticking those can never add an
+      // asset, so hide them by default — that's the whole reason the Add button
+      // used to sit there reading "Add these 0 assets".
       var groupRows = "";
-      var groupCount = 0;
+      var emptyHidden = 0;
       walkGroupTree(function (gid, gname, depth) {
-        groupCount++;
         var count = devicesInGroup(all, gid).length;
         var on = !!gsel[gid];
+        if (!count && !showEmptyGroups && !on) { emptyHidden++; return; }
         groupRows +=
-          '<label style="display:flex; align-items:center; gap:9px; padding:5px 8px; padding-left:'+(8 + depth*20)+'px; border-radius:7px; cursor:pointer; background:'+(on?C.brandSoft:"transparent")+';">' +
+          '<label style="display:flex; align-items:center; gap:9px; padding:5px 8px; padding-left:'+(8 + depth*20)+'px; border-radius:7px; cursor:'+(count?'pointer':'default')+'; background:'+(on?C.brandSoft:"transparent")+';">' +
             (depth ? '<span style="color:'+C.faint+'; font-size:11px; margin-left:-13px; width:9px;">\u2514</span>' : '') +
-            '<input type="checkbox" data-rpgroup="'+esc(gid)+'" '+(on?"checked":"")+' style="width:15px;height:15px; flex:none;">' +
+            '<input type="checkbox" data-rpgroup="'+esc(gid)+'" '+(on?"checked":"")+(count?"":" disabled")+' style="width:15px;height:15px; flex:none;'+(count?"":" opacity:.35;")+'">' +
             '<span style="font-size:13px; color:'+(count?C.ink:C.faint)+'; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">'+esc(gname)+'</span>' +
             '<span style="flex:1;"></span>' +
-            '<span style="font-size:11.5px; color:'+C.faint+'; font-variant-numeric:tabular-nums; flex:none;">'+count+'</span></label>';
+            '<span style="font-size:11.5px; color:'+(count?C.soft:C.faint)+'; font-variant-numeric:tabular-nums; flex:none;">'+(count || "\u2014")+'</span></label>';
       });
       var checkedEmpty = (r.groupIds||[]).length > 0 && selected.length === 0;
       picker =
         (checkedEmpty
           ? '<div style="margin-top:11px; background:'+C.amberBg+'; border:1px solid '+C.amber+'55; border-radius:9px; padding:9px 12px; font-size:12px; color:'+C.amber+'; line-height:1.5;">' +
             'The group'+((r.groupIds||[]).length===1?'':'s')+' you\u2019ve ticked contain no vehicles, so the report would be empty. ' +
-            '<span style="color:'+C.soft+';">The number on the right of each row is how many vehicles are in that branch \u2014 pick one showing more than 0.</span></div>'
+            '<span style="color:'+C.soft+';">Pick a group whose count on the right is 1 or more.</span></div>'
           : '') +
-        '<div style="display:flex; gap:8px; align-items:center; margin-top:11px;">' +
-          '<span style="font-size:11px; color:'+C.faint+';">Selecting a group includes its sub-groups. Counts are vehicles in that branch.</span>' +
+        '<div style="display:flex; gap:8px; align-items:center; margin-top:11px; flex-wrap:wrap;">' +
+          '<span style="font-size:11px; color:'+C.faint+';">Selecting a group includes its sub-groups. The number on the right is vehicles in that branch.</span>' +
           '<span style="flex:1;"></span>' +
+          (emptyHidden || showEmptyGroups
+            ? '<button id="rp-gempty" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer;">' +
+              (showEmptyGroups ? "Hide empty groups" : "Show "+emptyHidden+" empty group"+(emptyHidden===1?"":"s")) + '</button>'
+            : '') +
           '<button id="rp-gclear" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:4px 10px; font-size:12px; font-weight:600; cursor:pointer;">Clear</button>' +
         '</div>' +
-        '<div style="margin-top:8px; max-height:300px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
-        (groupRows || '<div style="padding:12px; color:'+C.soft+'; font-size:12.5px;">No groups found.</div>') + '</div>';
+        '<div id="rp-scroll" style="margin-top:8px; max-height:300px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
+        (groupRows || '<div style="padding:12px; color:'+C.soft+'; font-size:12.5px;">No groups contain vehicles.</div>') + '</div>';
     } else if (r.assetMode === "assets") {
       var dsel = {}; (r.deviceIds||[]).forEach(function (id){ dsel[id]=true; });
       var ft = assetFilterText.toLowerCase();
@@ -2490,18 +2504,19 @@ geotab.addin.jackMaintenance = function () {
           '<select id="rp-addgroup" style="'+inputCss+'"><option value="">+ Add a whole group\u2026</option>' +
             (function () { var o = ""; walkGroupTree(function (gid, gname, depth) {
               var c = devicesInGroup(all, gid).length;
+              if (!c) return; // an empty group can't add anything
               o += '<option value="'+esc(gid)+'">'+"\u00a0\u00a0".repeat(depth)+esc(gname)+' ('+c+')</option>';
             }); return o; })() +
           '</select>' +
         '</div>' +
-        '<div style="margin-top:9px; max-height:320px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
+        '<div id="rp-scroll" style="margin-top:9px; max-height:320px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; padding:5px; background:'+C.card2+';">' +
           (assetRows || '<div style="padding:12px; color:'+C.soft+'; font-size:12.5px;">No assets match that filter.</div>') + '</div>';
     }
 
     // ---- preview panel ----
     var rows = buildReportRows(selected);
     var td = 'padding:5px 9px; border-top:1px solid '+C.line+';';
-    var previewRows = rows.slice(0, 6).map(function (x) {
+    var previewRows = rows.map(function (x) {
       return '<tr>' +
         '<td style="'+td+' color:'+C.ink+'; white-space:nowrap;">'+esc(x.name)+'</td>' +
         '<td style="'+td+' color:'+C.soft+';">'+esc(x.status)+'</td>' +
@@ -2511,20 +2526,34 @@ geotab.addin.jackMaintenance = function () {
         '<td style="'+td+' color:'+C.soft+'; text-align:right; font-variant-numeric:tabular-nums;">'+(x.lastOdo==null?"\u2014":fmt(x.lastOdo))+'</td>' +
       '</tr>';
     }).join("");
-    var th = 'padding:5px 9px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:'+C.faint+'; text-align:left;';
+    // Sticky header + its own scroll area, so every selected asset is reachable
+    // no matter how long the list is.
+    var th = 'position:sticky; top:0; z-index:1; background:'+C.card2+'; padding:6px 9px; font-size:10.5px; font-weight:700; ' +
+             'text-transform:uppercase; letter-spacing:.05em; color:'+C.faint+'; text-align:left; border-bottom:1px solid '+C.line+';';
+    var queued = !!(r.testPending || r.sendNow);
     var preview =
-      '<div style="overflow:auto; border:1px solid '+C.line+'; border-radius:9px; background:'+C.card2+';">' +
+      '<div style="max-height:330px; overflow:auto; border:1px solid '+C.line+'; border-radius:9px; background:'+C.card2+';">' +
       '<table style="width:100%; border-collapse:collapse; font-size:12.5px;"><thead><tr>' +
         '<th style="'+th+'">Asset</th><th style="'+th+'">Status</th>' +
         '<th style="'+th+' text-align:right;">Mi. remaining</th><th style="'+th+' text-align:right;">Odometer</th>' +
         '<th style="'+th+'">Last oil change</th><th style="'+th+' text-align:right;">At odometer</th>' +
       '</tr></thead><tbody>'+(previewRows || '<tr><td colspan="6" style="padding:12px; color:'+C.soft+';">No assets selected.</td></tr>')+'</tbody></table></div>' +
-      (rows.length > 6 ? '<div style="font-size:11px; color:'+C.faint+'; margin-top:7px;">Showing 6 of '+rows.length+' rows.</div>' : '') +
-      '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">' +
+      '<div style="font-size:11px; color:'+C.faint+'; margin-top:7px;">' +
+        (rows.length ? rows.length + ' row' + (rows.length===1?'':'s') + ' \u2014 exactly what sheet 1 of the workbook will contain.' + (rows.length > 8 ? ' Scroll inside the table to see them all.' : '') : '') +
+      '</div>' +
+      '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center;">' +
         '<button id="rp-save" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:650; cursor:pointer;">Save schedule</button>' +
         '<button id="rp-csv" style="border:1px solid '+C.line+'; background:transparent; color:'+C.ink+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Download CSV now</button>' +
-        '<button id="rp-test" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;">Send test on next run</button>' +
-      '</div>';
+        '<button id="rp-emailnow"' + (queued ? ' disabled' : '') + ' style="border:1px solid ' + (queued ? C.line : C.brand+'8c') + '; background:' + (queued ? 'transparent' : C.brandSoft) + '; color:' + (queued ? C.faint : C.brand) + '; border-radius:8px; padding:7px 14px; font-size:13px; font-weight:650; cursor:' + (queued ? 'default' : 'pointer') + ';">' + (queued ? 'Email queued' : 'Email report now') + '</button>' +
+        (queued ? '<button id="rp-cancelnow" style="border:1px solid '+C.line+'; background:transparent; color:'+C.soft+'; border-radius:8px; padding:7px 12px; font-size:12.5px; font-weight:600; cursor:pointer;">Cancel</button>' : '') +
+      '</div>' +
+      (queued
+        ? '<div style="margin-top:10px; background:'+C.brandSoft+'; border:1px solid '+C.brand+'55; border-radius:9px; padding:9px 12px; font-size:12px; color:'+C.brand+'; line-height:1.5;">' +
+          'Queued. The spreadsheet is built and sent by the automation job, so it goes out on that job\u2019s next run. ' +
+          '<span style="color:'+C.soft+';">To send it immediately, open the repo\u2019s Actions tab and run the workflow manually.</span></div>'
+        : '<div style="margin-top:9px; font-size:11px; color:'+C.faint+'; line-height:1.5;">' +
+          '\u201cEmail report now\u201d hands the job to the automation script \u2014 the Add-In runs in your browser and can\u2019t send mail itself. ' +
+          'For an instant copy, use Download CSV.</div>');
 
     reportEl.innerHTML =
       panel("Schedule",
@@ -2532,6 +2561,12 @@ geotab.addin.jackMaintenance = function () {
         schedule) +
       panel("Assets in the report", "Pick the whole fleet, one or more groups, or individual assets.", modeRow + picker) +
       panel("Columns &amp; preview", "The workbook has two sheets. <b>Fleet Summary</b>: asset, status, mileage remaining before oil change, odometer, and when the last oil change was done and at what mileage. <b>Service History</b>: every service on every asset \u2014 the oil change plus each custom reminder \u2014 with its interval, status, and last completion. Preview below shows sheet 1 from currently loaded data.", preview);
+
+    // put the list back where it was before the re-render
+    if (prevScroll != null) {
+      var newScrollEl = $("rp-scroll");
+      if (newScrollEl) newScrollEl.scrollTop = prevScroll;
+    }
 
     // ---- wiring ----
     function bindVal(id, key, transform) {
@@ -2603,6 +2638,8 @@ geotab.addin.jackMaintenance = function () {
     });
     var gclear = $("rp-gclear");
     if (gclear) gclear.addEventListener("click", function () { r.groupIds = []; renderReport(devices); });
+    var gempty = $("rp-gempty");
+    if (gempty) gempty.addEventListener("click", function () { showEmptyGroups = !showEmptyGroups; renderReport(devices); });
 
     reportEl.querySelectorAll("[data-rpgpick]").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -2700,13 +2737,37 @@ geotab.addin.jackMaintenance = function () {
       toast("Downloaded "+out.length+" rows");
     });
 
-    var test = $("rp-test");
-    if (test) test.addEventListener("click", function () {
+    // "Email report now" — the Add-In has no mail transport, so this flags the
+    // request and the automation job sends it on its next run (immediately, if
+    // you trigger the workflow by hand).
+    var emailNow = $("rp-emailnow");
+    if (emailNow) emailNow.addEventListener("click", function () {
+      var recips = (($("rp-to")||{}).value || "").trim() || (globalSettings.defaultEmailTo || "").trim();
+      if (!recips) { toast("Set report recipients, or a fleet default in Setup, first"); return; }
+      if (!selectedReportDevices(all, r).length) { toast("No assets selected for the report"); return; }
       var draft = JSON.parse(JSON.stringify(r));
-      draft.testPending = true;
+      var tEl = $("rp-time"), toEl = $("rp-to");
+      if (tEl && tEl.value) draft.time = tEl.value;
+      if (toEl) draft.recipients = toEl.value.trim();
+      draft.sendNow = true;
+      draft.testPending = true; // older script builds look at this flag
+      draft.sendNowAt = new Date().toISOString();
       patchSettings({ report: draft }).then(function () {
         reportDraft = draft;
-        toast("Test queued \u2014 the next automation run will email the spreadsheet");
+        toast("Queued \u2014 the automation job will email it on its next run");
+        renderReport(devices);
+      }).catch(function (e){ toast("Failed: "+(e&&e.message?e.message:e)); });
+    });
+    var cancelNow = $("rp-cancelnow");
+    if (cancelNow) cancelNow.addEventListener("click", function () {
+      var draft = JSON.parse(JSON.stringify(r));
+      draft.sendNow = false;
+      draft.testPending = false;
+      delete draft.sendNowAt;
+      patchSettings({ report: draft }).then(function () {
+        reportDraft = draft;
+        toast("Queued email cancelled");
+        renderReport(devices);
       }).catch(function (e){ toast("Failed: "+(e&&e.message?e.message:e)); });
     });
   }
