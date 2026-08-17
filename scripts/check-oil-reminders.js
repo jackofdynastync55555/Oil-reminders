@@ -1150,7 +1150,7 @@ ${parts.map((p, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openx
 //   enabled, frequency: "daily"|"weekly", dayOfWeek: 0-6 (Sun=0),
 //   time: "07:00", timezone: "America/New_York", recipients: "a@b.com,c@d.com",
 //   assetMode: "all"|"groups"|"assets", groupIds: [], deviceIds: [],
-//   testPending: bool, lastSentKey: "2026-08-13"
+//   testPending: bool, sendNow: bool, lastSentKey: "2026-08-13"
 // }
 
 // Wall-clock parts for a timezone, without pulling in a date library.
@@ -1185,7 +1185,8 @@ function zonedParts(date, timeZone) {
 // scheduled time and then not again that period — the cron can run as often as
 // you like without double-sending.
 function reportIsDue(report, now) {
-  if (!report || !report.enabled) return { due: false, reason: "disabled" };
+  if (!report) return { due: false, reason: "not configured" };
+  if (!report.enabled) return { due: false, reason: "schedule disabled" };
   const tz = report.timezone || "America/New_York";
   const { dateKey, minutes, weekday } = zonedParts(now, tz);
 
@@ -1377,12 +1378,15 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
 
   const now = new Date();
   const check = reportIsDue(report, now);
-  const isTest = !!report.testPending;
+  // "Email report now" from the Add-In. sendNow is the current flag;
+  // testPending is kept for configs written by older builds.
+  const onDemand = !!(report.sendNow || report.testPending);
 
-  if (!check.due && !isTest) {
+  if (!check.due && !onDemand) {
     if (report.enabled) console.log(`  Report not due (${check.reason}).`);
     return;
   }
+  if (onDemand) console.log(`  On-demand report requested from the Add-In.`);
 
   const recipients =
     (report.recipients && report.recipients.trim()) ||
@@ -1406,12 +1410,13 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
   const tz = report.timezone || "America/New_York";
   const stamp = zonedParts(now, tz).dateKey;
   const { buffer, count, serviceCount } = buildReportWorkbook(label, rows, customStatus.status || {}, customStatus.lines || [], now);
+  const outOfBand = onDemand && !check.due; // requested by hand, not the scheduled slot
   const fileLabel = String(label || "fleet").replace(/[^a-zA-Z0-9._-]+/g, "-").toLowerCase();
   const filename = `fleet-maintenance-${fileLabel}-${stamp}.xlsx`;
 
   const freqText = report.frequency === "weekly" ? "Weekly" : "Daily";
   const body = [
-    `${isTest ? "Test" : freqText} fleet maintenance report${label ? " for " + label : ""}.`,
+    `${outOfBand ? "On-demand" : freqText} fleet maintenance report${label ? " for " + label : ""}.`,
     ``,
     `${count} asset${count === 1 ? "" : "s"} included, ${serviceCount} service line${serviceCount === 1 ? "" : "s"}.`,
     `Generated ${now.toLocaleString("en-US", { timeZone: tz })} (${tz}).`,
@@ -1430,7 +1435,7 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
   await transporter.sendMail({
     from: EMAIL_FROM,
     to: recipients,
-    subject: `${isTest ? "[TEST] " : ""}Fleet maintenance report \u2014 ${stamp}${label ? " \u2014 " + label : ""}`,
+    subject: `${outOfBand ? "[ON DEMAND] " : ""}Fleet maintenance report \u2014 ${stamp}${label ? " \u2014 " + label : ""}`,
     text: body,
     attachments: [{
       filename,
@@ -1440,10 +1445,15 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
   });
   console.log(`  Report emailed to ${recipients} (${count} assets, ${filename})`);
 
-  // Record the send so we don't repeat this period, and consume the test flag.
-  report.lastSentKey = check.dateKey || stamp;
+  // Record the send so the scheduled slot can't repeat this period, and consume
+  // the on-demand flags so one click sends exactly one email.
+  if (check.due) report.lastSentKey = check.dateKey || stamp;
   report.lastSentAt = now.toISOString();
-  if (isTest) report.testPending = false;
+  if (onDemand) {
+    report.sendNow = false;
+    report.testPending = false;
+    delete report.sendNowAt;
+  }
   await saveGlobalSettings(client, settingsRec);
 }
 
