@@ -202,14 +202,59 @@ async function getState(client) {
     search: { addInId: ADD_IN_ID },
   });
   const byDevice = new Map();
+  let dupes = 0;
   for (const rec of records) {
     const details =
       typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
-    if (details && details.deviceId) {
-      byDevice.set(details.deviceId, { id: rec.id, details });
+    if (!details || !details.deviceId) continue;
+    const prev = byDevice.get(details.deviceId);
+    if (prev) {
+      // More than one record for the same vehicle. Geotab doesn't guarantee
+      // Get() ordering, so if we only ever cleared the "winner" a stale
+      // emailPending on the loser could resurface on a later run and re-send a
+      // confirmation that was already sent. Keep every id so flags get cleared
+      // on all of them.
+      dupes++;
+      prev.dupeIds.push(rec.id);
+      // prefer the record carrying a pending flag, then the higher odometer
+      const better =
+        (details.emailPending && !prev.details.emailPending) ||
+        (Number(details.lastNotifiedMeters || 0) > Number(prev.details.lastNotifiedMeters || 0));
+      if (better) {
+        prev.dupeIds.push(prev.id);
+        prev.id = rec.id;
+        prev.details = details;
+        prev.dupeIds = prev.dupeIds.filter((x) => x !== rec.id);
+      }
+    } else {
+      byDevice.set(details.deviceId, { id: rec.id, details, dupeIds: [] });
     }
   }
+  if (dupes) {
+    console.log(`  NOTE: ${dupes} duplicate oil record(s) found; flags will be cleared on all copies.`);
+  }
   return byDevice;
+}
+
+// Clear the pending flags on any duplicate copies of a device's record so a
+// stale flag can't resurface and re-send.
+async function clearDupeFlags(client, entry) {
+  for (const id of entry.dupeIds || []) {
+    try {
+      const cleared = { ...entry.details };
+      delete cleared.emailPending;
+      delete cleared.emailPendingReason;
+      delete cleared.emailPendingOdoMeters;
+      delete cleared.dueNotified;
+      delete cleared.dueNotifiedDate;
+      await client.call("Set", {
+        typeName: "AddInData",
+        entity: { id, addInId: ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details: cleared },
+      });
+    } catch (e) {
+      console.log(`    could not clear duplicate record ${id}: ${e.message}`);
+    }
+  }
 }
 
 async function saveState(client, existing, details) {
@@ -255,6 +300,7 @@ function soonWindowUnits(settings, intervalUnits) {
 const ALERT_DEFAULTS = {
   undrivable: true, redLamp: true, safetyItem: true,
   oilDue: true, oilSoon: true, serviceDue: true, serviceDone: true,
+  oilServiceDone: false,
   stopped: false, deviceFault: false,
 };
 function alertEnabled(settings, id) {
@@ -522,34 +568,76 @@ async function processAccount(account) {
     }
   }
 
-  // Handle "Mark serviced now" confirmations flagged in the Add-In
+  // Handle "Mark serviced now" confirmations flagged in the Add-In.
+  // The flag is consumed whether or not the email is enabled — the tracking
+  // reset already happened, so leaving it set would just re-fire forever.
+  const wantServicedEmail = alertEnabled(settings, "oilServiceDone");
   for (const [deviceId, entry] of state.entries()) {
     const d = entry.details;
-    if (d && d.emailPending) {
+    if (!d || !d.emailPending) continue;
+
+    // A completion is identified by its timestamp. If we've already notified
+    // for that exact completion, never notify again — this is the belt to the
+    // duplicate-record braces above.
+    const token = d.emailPendingDate || d.lastNotifiedDate || String(d.emailPendingOdoMeters || "");
+    const alreadyNotified = d.lastServicedNotifyToken && d.lastServicedNotifyToken === token;
+
+    if (wantServicedEmail && !alreadyNotified) {
       serviced.push({
         name: d.deviceName || deviceId,
         atUnits: (d.emailPendingOdoMeters != null ? d.emailPendingOdoMeters : d.lastNotifiedMeters) / METERS_PER_UNIT,
         emailTo: d.emailTo || null,
       });
-      // Clear the flag so it only emails once. dueNotified also goes, so the
-      // next time this vehicle passes its interval it notifies again.
-      const cleared = { ...d };
-      delete cleared.emailPending;
-      delete cleared.emailPendingReason;
-      delete cleared.emailPendingOdoMeters;
-      delete cleared.dueNotified;
-      delete cleared.dueNotifiedDate;
-      await saveState(client, entry, cleared);
-      entry.details = cleared;
-      console.log(`    ${cleared.deviceName || deviceId}: marked-serviced confirmation queued`);
+      console.log(`    ${d.deviceName || deviceId}: marked-serviced confirmation queued`);
+    } else if (alreadyNotified) {
+      console.log(`    ${d.deviceName || deviceId}: confirmation already sent for this completion, skipping`);
     }
+
+    const cleared = { ...d };
+    delete cleared.emailPending;
+    delete cleared.emailPendingReason;
+    delete cleared.emailPendingOdoMeters;
+    delete cleared.dueNotified;
+    delete cleared.dueNotifiedDate;
+    if (token) cleared.lastServicedNotifyToken = token;
+    await saveState(client, entry, cleared);
+    entry.details = cleared;
+    await clearDupeFlags(client, entry);
   }
-  if (serviced.length) console.log(`  ${serviced.length} marked-serviced confirmation(s) to send`);
+  if (serviced.length) {
+    console.log(`  ${serviced.length} marked-serviced confirmation(s) to send`);
+  } else if (!wantServicedEmail) {
+    console.log(`  Marked-serviced confirmation email is off (Setup \u2192 Alerts); resets still tracked and shown in the report.`);
+  }
 
   // Send one digest per resolved recipient. A vehicle's recipient is:
   //   its own emailTo (set per-asset or bulk-per-group in the Add-In)
   //   → the fleet default (settingsKey=global) → DBn_EMAILTO → none.
   // Vehicles sharing a recipient are combined into a single email to that address.
+  // Manual "Email reset summary now" from the Oil tab: gather every vehicle
+  // whose most recent service was a manual confirmation in the last 30 days.
+  if (settings.oilResetSendNow) {
+    const cutoff = Date.now() - 30 * 86400000;
+    const seen = new Set(serviced.map((v) => v.name));
+    for (const [deviceId, entry] of state.entries()) {
+      const d = entry.details;
+      const last = lastServiceFrom(d);
+      if (!last.date || last.source !== "manual") continue;
+      if (new Date(last.date).getTime() < cutoff) continue;
+      const nm = d.deviceName || deviceId;
+      if (seen.has(nm)) continue;
+      seen.add(nm);
+      serviced.push({
+        name: nm,
+        atUnits: (last.odoMeters != null ? last.odoMeters : d.lastNotifiedMeters) / METERS_PER_UNIT,
+        emailTo: d.emailTo || null,
+      });
+    }
+    console.log(`  Manual reset summary requested \u2014 ${serviced.length} vehicle(s) in the last 30 days.`);
+    settingsRec.details.oilResetSendNow = false;
+    await saveGlobalSettings(client, settingsRec);
+  }
+
   for (const [to, items] of bucketByRecipient(serviced, globalDefaultEmail, account.emailTo)) {
     if (to === "__none__") { console.log(`  ${items.length} serviced confirmation(s) pending but no recipient resolved`); continue; }
     await sendServicedConfirmation(label, to, items);
@@ -1205,6 +1293,44 @@ function reportIsDue(report, now) {
   return { due: true, dateKey };
 }
 
+// Group id -> name, plus a parent map, so report rows can be grouped and
+// labelled the way they appear in MyGeotab.
+const CLASSIFICATION_GROUPS = /^(powertrain and fuel type|asset type|asset information|asset purpose|driveractivity|driver activity)$/i;
+
+async function getGroupInfo(client) {
+  try {
+    const groups = await client.call("Get", { typeName: "Group" });
+    const name = {}, parent = {};
+    (groups || []).forEach((g) => {
+      if (g.name) name[g.id] = g.name;
+      (g.children || []).forEach((c) => { parent[c.id] = g.id; });
+    });
+    return { name, parent };
+  } catch (e) {
+    console.log(`  Could not read group names: ${e.message}`);
+    return { name: {}, parent: {} };
+  }
+}
+
+// Best label for a device: deepest non-classification group it belongs to.
+function groupLabelFor(device, info) {
+  const ids = (device.groups || []).map((g) => g.id).filter((id) => info.name[id]);
+  let best = null, bestDepth = -1;
+  for (const id of ids) {
+    const nm = info.name[id];
+    if (!nm || CLASSIFICATION_GROUPS.test(nm)) continue;
+    let depth = 0, cur = id;
+    while (info.parent[cur] && depth < 20) { cur = info.parent[cur]; depth++; }
+    if (depth > bestDepth) { bestDepth = depth; best = id; }
+  }
+  if (!best) return "Ungrouped";
+  // build the path so "Raleigh" reads as "Company Group > Service Vans > Raleigh"
+  const path = [];
+  let cur = best, guard = 0;
+  while (cur && guard++ < 20) { if (info.name[cur]) path.unshift(info.name[cur]); cur = info.parent[cur]; }
+  return path.join(" > ") || info.name[best];
+}
+
 // Group id -> child ids, so a selected parent group can be expanded to
 // everything beneath it. The Add-In stores only the groups the user ticked.
 async function getGroupTree(client) {
@@ -1273,37 +1399,83 @@ function fmtDate(iso) {
 }
 
 function buildReportWorkbook(label, rows, customStatus, serviceLines, generatedAt) {
-  const sorted = rows.slice()
-    .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
+  // Bucket by group, then sort groups alphabetically and assets within them,
+  // so the workbook reads the way the fleet is actually organised.
+  const byGroup = {};
+  rows.forEach((r) => {
+    const g = r.group || "Ungrouped";
+    if (!byGroup[g]) byGroup[g] = [];
+    byGroup[g].push(r);
+  });
+  const groupNames = Object.keys(byGroup).sort((a, b) => {
+    if (a === "Ungrouped") return 1;
+    if (b === "Ungrouped") return -1;
+    return a.localeCompare(b);
+  });
+  groupNames.forEach((g) => {
+    byGroup[g].sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
+  });
 
-  // ---- Sheet 1: fleet summary, one row per asset ------------------------
+  const linesByDevice = {};
+  (serviceLines || []).forEach((l) => {
+    if (!linesByDevice[l.deviceId]) linesByDevice[l.deviceId] = [];
+    linesByDevice[l.deviceId].push(l);
+  });
+
+  // Short "what else is outstanding" cell for the summary sheet.
+  function otherServices(r) {
+    const list = (linesByDevice[r.deviceId] || []).filter((l) => l.status !== "Off");
+    if (!list.length) return "\u2014";
+    const due = list.filter((l) => /due/i.test(l.status) && !/soon/i.test(l.status));
+    const soon = list.filter((l) => /soon/i.test(l.status));
+    const parts = [];
+    if (due.length) parts.push(`DUE: ${due.map((l) => l.service).join(", ")}`);
+    if (soon.length) parts.push(`Soon: ${soon.map((l) => l.service).join(", ")}`);
+    if (!parts.length) return `${list.length} on track`;
+    return parts.join(" \u00b7 ");
+  }
+
+  // ---- Sheet 1: fleet summary, grouped ---------------------------------
   const summaryHeader = [
     { v: "Asset", s: 1 },
+    { v: "Group", s: 1 },
     { v: "Status", s: 1 },
     { v: `Mileage remaining before oil change (${UNITS})`, s: 1 },
     { v: `Odometer reading (${UNITS})`, s: 1 },
     { v: "Last oil change", s: 1 },
     { v: `Odometer at last oil change (${UNITS})`, s: 1 },
+    { v: "Other services", s: 1 },
   ];
-  const summaryBody = sorted.map((r) => {
-    const last = r.last || {};
-    return [
-      { v: r.name, s: 3 },
-      { v: combinedStatus(r, customStatus), s: 3 },
-      r.remainingUnits == null ? { v: "\u2014", s: 3 } : { v: Math.round(r.remainingUnits), s: 2 },
-      r.odoUnits == null ? { v: "\u2014", s: 3 } : { v: Math.round(r.odoUnits), s: 2 },
-      { v: fmtDate(last.date), s: 3 },
-      last.odoMeters == null
-        ? { v: "\u2014", s: 3 }
-        : { v: Math.round(last.odoMeters / METERS_PER_UNIT), s: 2 },
-    ];
+  const summaryRows = [summaryHeader];
+  let assetCount = 0;
+  groupNames.forEach((g) => {
+    const list = byGroup[g];
+    const dueNow = list.filter((r) => /due now|overdue/i.test(r.status)).length;
+    summaryRows.push([
+      { v: `${g}  (${list.length} asset${list.length === 1 ? "" : "s"}${dueNow ? `, ${dueNow} due now` : ""})`, s: 4 },
+      { v: "", s: 4 }, { v: "", s: 4 }, { v: "", s: 4 },
+      { v: "", s: 4 }, { v: "", s: 4 }, { v: "", s: 4 }, { v: "", s: 4 },
+    ]);
+    list.forEach((r) => {
+      assetCount++;
+      const last = r.last || {};
+      summaryRows.push([
+        { v: r.name, s: 3 },
+        { v: g, s: 3 },
+        { v: combinedStatus(r, customStatus), s: 3 },
+        r.remainingUnits == null ? { v: "\u2014", s: 3 } : { v: Math.round(r.remainingUnits), s: 2 },
+        r.odoUnits == null ? { v: "\u2014", s: 3 } : { v: Math.round(r.odoUnits), s: 2 },
+        { v: fmtDate(last.date), s: 3 },
+        last.odoMeters == null ? { v: "\u2014", s: 3 } : { v: Math.round(last.odoMeters / METERS_PER_UNIT), s: 2 },
+        { v: otherServices(r), s: 3 },
+      ]);
+    });
   });
 
-  // ---- Sheet 2: every service on every asset ----------------------------
-  // Oil change first for each asset, then its custom reminders, so each
-  // vehicle reads as a block.
+  // ---- Sheet 2: every service on every asset, grouped -------------------
   const serviceHeader = [
     { v: "Asset", s: 1 },
+    { v: "Group", s: 1 },
     { v: "Service", s: 1 },
     { v: "Type", s: 1 },
     { v: "Interval", s: 1 },
@@ -1313,63 +1485,65 @@ function buildReportWorkbook(label, rows, customStatus, serviceLines, generatedA
     { v: `Odometer at completion (${UNITS})`, s: 1 },
     { v: "Confirmed by", s: 1 },
   ];
-
-  const linesByDevice = {};
-  (serviceLines || []).forEach((l) => {
-    if (!linesByDevice[l.deviceId]) linesByDevice[l.deviceId] = [];
-    linesByDevice[l.deviceId].push(l);
-  });
-
-  const serviceBody = [];
-  sorted.forEach((r) => {
-    const last = r.last || {};
-    // the oil change line, built from the oil reminder record
-    serviceBody.push([
-      { v: r.name, s: 4 },
-      { v: "Oil change", s: 4 },
-      { v: "Distance", s: 4 },
-      { v: r.intervalUnits ? `${Math.round(r.intervalUnits).toLocaleString()} ${UNITS}` : "\u2014", s: 4 },
-      { v: r.status, s: 4 },
-      r.remainingUnits == null
-        ? { v: "\u2014", s: 4 }
-        : { v: `${Math.round(r.remainingUnits).toLocaleString()} ${UNITS}`, s: 4 },
-      { v: fmtDate(last.date), s: 4 },
-      last.odoMeters == null ? { v: "\u2014", s: 4 } : { v: Math.round(last.odoMeters / METERS_PER_UNIT), s: 4 },
-      { v: last.source === "manual" ? "Marked serviced" : last.source === "auto" ? "Auto-reset" : "\u2014", s: 4 },
+  const serviceRows = [serviceHeader];
+  let serviceCount = 0;
+  groupNames.forEach((g) => {
+    const list = byGroup[g];
+    const lineTotal = list.reduce((n, r) => n + 1 + (linesByDevice[r.deviceId] || []).length, 0);
+    serviceRows.push([
+      { v: `${g}  (${lineTotal} service line${lineTotal === 1 ? "" : "s"})`, s: 4 },
+      ...Array(9).fill({ v: "", s: 4 }),
     ]);
-    // then each custom reminder defined on that asset
-    (linesByDevice[r.deviceId] || [])
-      .slice()
-      .sort((a, b) => String(a.service).localeCompare(String(b.service)))
-      .forEach((l) => {
-        serviceBody.push([
-          { v: r.name, s: 3 },
-          { v: l.service, s: 3 },
-          { v: l.type, s: 3 },
-          { v: `${Math.round(l.interval).toLocaleString()} ${l.unit}`, s: 3 },
-          { v: l.status, s: 3 },
-          l.remaining == null ? { v: "\u2014", s: 3 } : { v: `${l.remaining.toLocaleString()} ${l.unit}`, s: 3 },
-          { v: fmtDate(l.lastDate), s: 3 },
-          l.lastOdoMeters == null ? { v: "\u2014", s: 3 } : { v: Math.round(l.lastOdoMeters / METERS_PER_UNIT), s: 2 },
-          { v: l.lastSource === "manual" ? "Marked done" : l.lastSource === "auto" ? "Auto-reset" : "\u2014", s: 3 },
-        ]);
-      });
+    list.forEach((r) => {
+      const last = r.last || {};
+      serviceCount++;
+      serviceRows.push([
+        { v: r.name, s: 3 },
+        { v: g, s: 3 },
+        { v: "Oil change", s: 3 },
+        { v: "Distance", s: 3 },
+        { v: r.intervalUnits ? `${Math.round(r.intervalUnits).toLocaleString()} ${UNITS}` : "\u2014", s: 3 },
+        { v: r.status, s: 3 },
+        r.remainingUnits == null ? { v: "\u2014", s: 3 } : { v: `${Math.round(r.remainingUnits).toLocaleString()} ${UNITS}`, s: 3 },
+        { v: fmtDate(last.date), s: 3 },
+        last.odoMeters == null ? { v: "\u2014", s: 3 } : { v: Math.round(last.odoMeters / METERS_PER_UNIT), s: 2 },
+        { v: last.source === "manual" ? "Marked serviced" : last.source === "auto" ? "Auto-reset" : "\u2014", s: 3 },
+      ]);
+      (linesByDevice[r.deviceId] || [])
+        .slice()
+        .sort((a, b) => String(a.service).localeCompare(String(b.service)))
+        .forEach((l) => {
+          serviceCount++;
+          serviceRows.push([
+            { v: r.name, s: 3 },
+            { v: g, s: 3 },
+            { v: l.service, s: 3 },
+            { v: l.type, s: 3 },
+            { v: `${Math.round(l.interval).toLocaleString()} ${l.unit}`, s: 3 },
+            { v: l.status, s: 3 },
+            l.remaining == null ? { v: "\u2014", s: 3 } : { v: `${l.remaining.toLocaleString()} ${l.unit}`, s: 3 },
+            { v: fmtDate(l.lastDate), s: 3 },
+            l.lastOdoMeters == null ? { v: "\u2014", s: 3 } : { v: Math.round(l.lastOdoMeters / METERS_PER_UNIT), s: 2 },
+            { v: l.lastSource === "manual" ? "Marked done" : l.lastSource === "auto" ? "Auto-reset" : "\u2014", s: 3 },
+          ]);
+        });
+    });
   });
 
   const buffer = buildWorkbook([
     {
       name: "Fleet Summary",
-      columns: [{ width: 32 }, { width: 34 }, { width: 34 }, { width: 22 }, { width: 18 }, { width: 30 }],
-      rows: [summaryHeader, ...summaryBody],
+      columns: [{ width: 30 }, { width: 30 }, { width: 32 }, { width: 32 }, { width: 21 }, { width: 17 }, { width: 28 }, { width: 40 }],
+      rows: summaryRows,
     },
     {
       name: "Service History",
-      columns: [{ width: 32 }, { width: 24 }, { width: 11 }, { width: 15 }, { width: 30 }, { width: 15 }, { width: 18 }, { width: 28 }, { width: 17 }],
-      rows: [serviceHeader, ...serviceBody],
+      columns: [{ width: 30 }, { width: 28 }, { width: 22 }, { width: 11 }, { width: 15 }, { width: 28 }, { width: 15 }, { width: 17 }, { width: 26 }, { width: 16 }],
+      rows: serviceRows,
     },
   ]);
 
-  return { buffer, count: summaryBody.length, serviceCount: serviceBody.length, generatedAt };
+  return { buffer, count: assetCount, serviceCount, groupCount: groupNames.length, generatedAt };
 }
 
 async function maybeSendReport(client, account, label, settingsRec, reportRows, customStatus, devices) {
@@ -1400,8 +1574,14 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
 
   const groupChildren = report.assetMode === "groups" ? await getGroupTree(client) : {};
   const selected = selectReportDevices(devices, report, groupChildren);
+  // Group labels for the workbook's section breaks
+  const groupInfo = await getGroupInfo(client);
+  const labelByDevice = {};
+  devices.forEach((d) => { labelByDevice[d.id] = groupLabelFor(d, groupInfo); });
   const wanted = new Set(selected.map((d) => d.id));
-  const rows = reportRows.filter((r) => wanted.has(r.deviceId));
+  const rows = reportRows
+    .filter((r) => wanted.has(r.deviceId))
+    .map((r) => ({ ...r, group: labelByDevice[r.deviceId] || "Ungrouped" }));
   if (!rows.length) {
     console.log(`  Report due but no assets matched the selection — skipping.`);
     return;
@@ -1409,7 +1589,7 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
 
   const tz = report.timezone || "America/New_York";
   const stamp = zonedParts(now, tz).dateKey;
-  const { buffer, count, serviceCount } = buildReportWorkbook(label, rows, customStatus.status || {}, customStatus.lines || [], now);
+  const { buffer, count, serviceCount, groupCount } = buildReportWorkbook(label, rows, customStatus.status || {}, customStatus.lines || [], now);
   const outOfBand = onDemand && !check.due; // requested by hand, not the scheduled slot
   const fileLabel = String(label || "fleet").replace(/[^a-zA-Z0-9._-]+/g, "-").toLowerCase();
   const filename = `fleet-maintenance-${fileLabel}-${stamp}.xlsx`;
@@ -1418,12 +1598,15 @@ async function maybeSendReport(client, account, label, settingsRec, reportRows, 
   const body = [
     `${outOfBand ? "On-demand" : freqText} fleet maintenance report${label ? " for " + label : ""}.`,
     ``,
-    `${count} asset${count === 1 ? "" : "s"} included, ${serviceCount} service line${serviceCount === 1 ? "" : "s"}.`,
+    `${count} asset${count === 1 ? "" : "s"} across ${groupCount} group${groupCount === 1 ? "" : "s"}, ${serviceCount} service line${serviceCount === 1 ? "" : "s"}.`,
     `Generated ${now.toLocaleString("en-US", { timeZone: tz })} (${tz}).`,
     ``,
-    `Sheet 1 (Fleet Summary): each asset with its current status, mileage`,
-    `remaining before its next oil change, odometer reading, and when the last`,
-    `oil change was completed and at what mileage.`,
+    `Both sheets are broken out by group, with a header row per group.`,
+    ``,
+    `Sheet 1 (Fleet Summary): each asset with its group, current status, mileage`,
+    `remaining before its next oil change, odometer reading, when the last oil`,
+    `change was completed and at what mileage, plus a summary of any other`,
+    `services due or coming up on that asset.`,
     ``,
     `Sheet 2 (Service History): every service tracked on every asset \u2014 the oil`,
     `change plus each custom reminder \u2014 with its interval, status, and when it`,
