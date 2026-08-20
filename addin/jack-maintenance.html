@@ -163,7 +163,8 @@ geotab.addin.jackMaintenance = function () {
     { id:"oilDue",      title:"Oil change due",                        note:"When the interval is reached \u00b7 email",   def:true },
     { id:"oilSoon",     title:"Oil change coming up",                  note:"At the due-soon window \u00b7 email",         def:true },
     { id:"serviceDue",  title:"Custom service due",                    note:"Daily digest \u00b7 email",                   def:true },
-    { id:"serviceDone", title:"Service marked done",                   note:"Confirmation \u00b7 email",                   def:true },
+    { id:"serviceDone", title:"Service marked done",                   note:"Custom service confirmation \u00b7 email",    def:true },
+    { id:"oilServiceDone", title:"Oil change reset confirmed",          note:"Off by default \u2014 the fleet report already covers it", def:false },
     { id:"stopped",     title:"Truck stopped reporting",               note:"After 7 days of silence \u00b7 email",        def:false },
     { id:"deviceFault", title:"Device / tracker fault",                note:"Email",                                       def:false }
   ];
@@ -186,6 +187,7 @@ geotab.addin.jackMaintenance = function () {
     autoResetOil:true,     // false => oil reminders stay due until marked serviced
     autoResetCustom:true,  // false => custom reminders stay due until marked done
     caution:"balanced",    // lean | balanced | safe — see CAUTION
+    oilResetSendNow:false, // one-shot: email a summary of recent manual resets
     alerts:null,           // { alertId: bool }, defaults from ALERT_DEFS
     faultOverrides:[],     // [{ code, label, from, to, muted, note }]
     report:null
@@ -1404,7 +1406,23 @@ geotab.addin.jackMaintenance = function () {
       '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:8px;">Applies to '+scopeNote+' shown below. Leave the email blank and apply to clear per-vehicle recipients (those vehicles fall back to the default above).</div>' +
     '</div>';
 
-    oilEl.innerHTML = summary + sectionLabel(
+    // Confirmation-email control lives here so it's next to the thing it
+    // describes, but it writes the same alert flag the Setup tab shows.
+    var confirmOn = alertOn("oilServiceDone");
+    var confirmBar =
+      '<div style="display:flex; align-items:center; gap:11px; flex-wrap:wrap; background:'+C.card+'; border:1px solid '+C.line+'; border-radius:12px; padding:10px 13px; margin-bottom:10px; box-shadow:'+C.shadow+';">' +
+        switchEl("oilconfirm", confirmOn) +
+        '<span style="flex:1; min-width:200px;">' +
+          '<span style="font-size:12.5px; font-weight:650; color:'+C.ink+';">Email a confirmation when a vehicle is marked serviced</span>' +
+          '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px; line-height:1.5;">' +
+            (confirmOn
+              ? 'Sends once per completion, never repeats. Resets are also listed in the scheduled fleet report.'
+              : 'Off \u2014 resets are still tracked and appear in the scheduled fleet report. Turn on only if you want a separate email each time.') +
+          '</div></span>' +
+        '<button id="oil-reset-now" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 12px; font-size:12.5px; font-weight:650; cursor:pointer;">Email reset summary now</button>' +
+      '</div>';
+
+    oilEl.innerHTML = summary + confirmBar + sectionLabel(
       "Oil across the fleet",
       counts.total + " tracked \u00b7 " + (counts.due||0) + " due now",
       resetModePill(globalSettings.autoResetOil !== false));
@@ -1645,6 +1663,24 @@ geotab.addin.jackMaintenance = function () {
         toast((val?"Recipients set":"Recipients cleared")+" for "+targets.length+" vehicle"+(targets.length===1?"":"s"));
         reloadAll();
       });
+    });
+
+    var oilConfirmSw = oilEl.querySelector('[data-switch="oilconfirm"]');
+    if (oilConfirmSw) oilConfirmSw.addEventListener("click", function () {
+      var next = {};
+      var curA = globalSettings.alerts || defaultAlerts();
+      Object.keys(curA).forEach(function (k){ next[k] = curA[k]; });
+      next.oilServiceDone = !alertOn("oilServiceDone");
+      patchSettings({ alerts: next }).then(function () {
+        toast(next.oilServiceDone ? "Confirmation emails on" : "Confirmation emails off \u2014 resets still in the report");
+        renderAll();
+      }).catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
+    });
+    var oilResetNow = $("oil-reset-now");
+    if (oilResetNow) oilResetNow.addEventListener("click", function () {
+      patchSettings({ oilResetSendNow: true }).then(function () {
+        toast("Reset summary queued \u2014 sends on the automation job\u2019s next run");
+      }).catch(function (e){ toast("Failed: "+(e&&e.message?e.message:e)); });
     });
 
     // wire service-history collapse toggles
