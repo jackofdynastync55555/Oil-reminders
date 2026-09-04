@@ -5,66 +5,98 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>DynastyJack Maintenance</title>
 <style>
+  /* Space Grotesk per the brand system. @import must be the first rule in the
+     sheet or the browser discards it; loadBrandFont() below also injects a
+     <link> at runtime in case MyGeotab strips head elements. */
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap');
+
   /* ---- Shell --------------------------------------------------------
      Flat, product-style dark surface. Panels read as quiet cards with a
      hairline border rather than glowing objects. */
-  html, body { background:#05080b; }
+  html, body { background:#0a0d13; }
   body {
-    background: #05080b !important;
+    background: #0a0d13 !important;
     -webkit-font-smoothing: antialiased;
     font-variant-numeric: tabular-nums;
   }
   * { box-sizing: border-box; }
-  ::selection { background: rgba(56,189,248,.28); }
+  ::selection { background: rgba(34,211,238,.26); }
 
   ::-webkit-scrollbar { width:10px; height:10px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background:#1d3640; border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
-  ::-webkit-scrollbar-thumb:hover { background:#2a4a57; background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb { background:#222c3a; border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background:#313f52; background-clip:padding-box; }
 
   /* Panels: hairline rim + a soft drop for depth. No coloured bloom. */
   #root div[style*="border-radius:12px"] {
     box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.9) !important;
     transition: border-color .15s ease;
   }
-  #root div[style*="border-radius:12px"]:hover { border-color:#28505e !important; }
+  #root div[style*="border-radius:12px"]:hover { border-color:#2c3a4c !important; }
 
   /* ---- Controls ----------------------------------------------------- */
   #root input, #root select, #root button, #root textarea { font-family: inherit; outline: none; }
   #root input:focus, #root select:focus {
-    border-color: rgba(56,189,248,.6) !important;
-    box-shadow: 0 0 0 3px rgba(56,189,248,.14) !important;
+    border-color: rgba(34,211,238,.6) !important;
+    box-shadow: 0 0 0 3px rgba(34,211,238,.15) !important;
   }
   #root button { transition: background-color .14s ease, border-color .14s ease, color .14s ease; }
   #root button:hover { filter: brightness(1.12); }
   #root button:active { transform: translateY(1px); }
   #root select { appearance: none; -webkit-appearance: none; padding-right: 26px !important;
-    background-image: linear-gradient(45deg, transparent 50%, #8ba3ad 50%), linear-gradient(135deg, #8ba3ad 50%, transparent 50%);
+    background-image: linear-gradient(45deg, transparent 50%, #8f9dad 50%), linear-gradient(135deg, #8f9dad 50%, transparent 50%);
     background-position: calc(100% - 15px) calc(50% + 1px), calc(100% - 10px) calc(50% + 1px);
     background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
-  #root input[type="checkbox"] { accent-color:#38bdf8; }
+  #root input[type="checkbox"] { accent-color:#22D3EE; }
 
-  /* ---- Brand wordmark ------------------------------------------------ */
-  #brandMark { display:flex; align-items:center; gap:11px; }
-  #wordmark { font-size:19px; font-weight:800; letter-spacing:-0.03em; line-height:1.05; }
-  #wordmark .lo { color:#e6f0f5; }
-  #wordmark .hi { color:#38bdf8; }
-  #brandSub { font-size:11.5px; color:#5e747e; margin-top:1px; letter-spacing:.01em; }
+  /* ---- Brand wordmark -------------------------------------------------
+     Space Grotesk per the brand system (display & wordmarks, 500/600/700).
+     Falls back to a neutral geometric stack if the webfont is blocked. */
+  #root, #root input, #root select, #root button, #root textarea {
+    font-family: 'Space Grotesk', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  }
+  #brandMark { display:flex; align-items:center; gap:15px; padding:2px 6px 2px 2px; }
+  #brandLock { display:flex; flex-direction:column; gap:1px; min-width:0; }
+  #wordmark {
+    font-family: 'Space Grotesk', -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size:21px; font-weight:700; letter-spacing:-0.018em; line-height:1.05; white-space:nowrap;
+  }
+  /* "dynasty" in white, "fleet" in the primary gradient, terminal dot in Fleet cyan */
+  #wordmark .wm-a { color:#FFFFFF; }
+  #wordmark .wm-b {
+    background: linear-gradient(96deg, #FF3B30 0%, #F7A23A 100%);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color:#F7A23A;
+  }
+  #wordmark .wm-dot { color:#22D3EE; }
+  #brandSub { font-size:11.5px; color:#616f80; letter-spacing:.01em; }
 </style>
 </head>
 <body id="body" style="margin:0; min-height:100vh; font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif; font-size:14px; line-height:1.4;">
 <div id="root" style="max-width:1180px; margin:0 auto; padding:16px 20px 44px;">
   <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:14px;">
     <div id="brandMark">
-      <svg width="34" height="34" viewBox="0 0 40 40" aria-hidden="true" style="flex:none;">
-        <circle cx="20" cy="20" r="18" fill="none" stroke="#f97316" stroke-width="3.5"/>
-        <circle cx="20" cy="20" r="11.5" fill="none" stroke="#38bdf8" stroke-width="3.5"/>
-        <circle cx="20" cy="20" r="4.5" fill="#a78bfa"/>
-        <rect x="19" y="1" width="2.5" height="9" rx="1.2" fill="#0a0e15"/>
+      <!-- "The orbital d" — geometry taken verbatim from the Dynasty brand
+           files (00_brand_sheet.pdf). Do not recolor, stretch or rebuild. -->
+      <svg width="34" height="40" viewBox="0 0 118.1 137.79" aria-label="Dynasty" role="img" style="flex:none; overflow:visible;">
+        <defs>
+          <linearGradient id="djGrad" gradientUnits="userSpaceOnUse"
+            x1="19.941043" y1="29.228327" x2="77.508291" y2="106.7227"
+            gradientTransform="matrix(1.711538,0,0,1.711538,38.807692,146.211538)">
+            <stop offset="0" stop-color="#FF3B30"/>
+            <stop offset="1" stop-color="#F7A23A"/>
+          </linearGradient>
+        </defs>
+        <g transform="translate(-58.49,-187.29)">
+          <circle cx="117.539062" cy="266.019531" r="51.3438" fill="none" stroke="url(#djGrad)" stroke-width="15.403846"/>
+          <path fill="url(#djGrad)" d="M 168.882812 187.289062 C 173.136719 187.289062 176.585938 191.542969 176.585938 194.992188 L 176.585938 309.664062 C 176.585938 313.917969 173.136719 317.367188 168.882812 317.367188 C 164.628906 317.367188 161.179688 313.113281 161.179688 309.664062 L 161.179688 194.992188 C 161.179688 190.738281 164.628906 187.289062 168.882812 187.289062 Z"/>
+          <path fill="none" stroke="#7C5CFF" stroke-width="9.177802" stroke-linecap="round" stroke-dasharray="111.444735 36.711207" transform="matrix(1,0.8391,-0.8391,1,0,0)" d="M 223.561437 98.229911 C 223.563905 111.262996 212.99651 121.829316 199.963425 121.831784 C 186.930708 121.830036 176.362096 111.264565 176.361921 98.229556 C 176.363668 85.19684 186.92914 74.628228 199.961856 74.629975 C 212.996865 74.6298 223.563185 85.197194 223.561437 98.229911 Z"/>
+          <circle cx="117.539062" cy="266.019531" r="10.2695" fill="#22D3EE"/>
+        </g>
       </svg>
-      <div style="min-width:0;">
-        <div id="wordmark"><span class="lo">dynastyJack</span> <span class="hi">maintenance.</span></div>
-        <div id="brandSub">Fleet Service &middot; Dynasty Communications</div>
+      <div id="brandLock">
+        <div id="wordmark"><span class="wm-a">dynasty</span> <span class="wm-b">fleet</span><span class="wm-dot">.</span></div>
+        <div id="brandSub">Maintenance &middot; DynastyJack</div>
       </div>
     </div>
     <div style="display:flex; gap:7px; align-items:center; flex-wrap:wrap;">
@@ -120,10 +152,13 @@ var FAULT_LOOKBACK_DAYS = 7; // controlled by the range selector (24h / 7d / 30d
 // a violet secondary for state badges. No coloured glow on panels.
 var THEMES = {
   dark: {
-    page:"#05080b", card:"#0d1b22", card2:"#12252e", ink:"#e6f0f5", soft:"#8ba3ad",
-    faint:"#5e747e", line:"#1d3640", brand:"#38bdf8", brandSoft:"#0d2c3a", onBrand:"#04141d", track:"#15272f",
-    green:"#34d399", greenBg:"#082a22", amber:"#fbbf24", amberBg:"#2b2008", lowamber:"#f0b866", lowamberBg:"#241a06",
-    red:"#f87171", redBg:"#2c1417", device:"#a78bfa", deviceBg:"#1c1733", purple:"#a78bfa", purpleBg:"#1c1733",
+    // Dynasty Brand System v1.0 — Cyan #22D3EE (Fleet), Violet #7C5CFF (Works),
+    // Orange #F39830, Ink #15181F, primary gradient #FF3B30 -> #F7A23A.
+    page:"#0a0d13", card:"#121720", card2:"#182030", ink:"#f2f5f8", soft:"#8f9dad",
+    faint:"#616f80", line:"#222c3a", brand:"#22D3EE", brandSoft:"#08303a", onBrand:"#04141d", track:"#1a2230",
+    green:"#34d399", greenBg:"#082a22", amber:"#F39830", amberBg:"#2b1d08", lowamber:"#f0b866", lowamberBg:"#241a06",
+    red:"#FF3B30", redBg:"#2c1315", device:"#7C5CFF", deviceBg:"#1a1533", purple:"#7C5CFF", purpleBg:"#1a1533",
+    gradFrom:"#FF3B30", gradTo:"#F7A23A", brandOrange:"#F39830", brandInk:"#15181F",
     shadow:"0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.9)"
   }
 };
@@ -3041,9 +3076,22 @@ geotab.addin.jackMaintenance = function () {
   // Walk up from #root making each ancestor transparent, then paint the page
   // itself dark. MyGeotab's own nav/header keeps its styling — we only touch
   // the containers our content actually sits inside.
+  // MyGeotab injects add-in markup into its own document and may drop <head>
+  // additions, so request the brand webfont at runtime as well.
+  function loadBrandFont() {
+    try {
+      if (document.getElementById("dj-brandfont")) return;
+      var l = document.createElement("link");
+      l.id = "dj-brandfont";
+      l.rel = "stylesheet";
+      l.href = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap";
+      document.head.appendChild(l);
+    } catch (e) { /* falls back to the system stack */ }
+  }
+
   function paintHostDark() {
     try {
-      var PAGE = "#05080b";
+      var PAGE = "#0a0d13";
       var GRAD = PAGE;
       var node = rootEl ? rootEl.parentNode : null;
       var guard = 0;
@@ -3069,10 +3117,12 @@ geotab.addin.jackMaintenance = function () {
 
   function applyTheme() {
     C = THEMES.dark;
+    loadBrandFont();
     paintHostDark();
     if (bodyEl) bodyEl.style.color = C.ink;
     var lu = $("lastUpdated"); if (lu) lu.style.color = C.faint;
     var sub = $("brandSub"); if (sub) sub.style.color = C.faint;
+    var wmA = document.querySelector("#wordmark .wm-a"); if (wmA) wmA.style.color = "#FFFFFF";
     var rb = $("refreshBtn");
     if (rb) {
       rb.style.background = C.card;
