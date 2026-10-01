@@ -124,13 +124,26 @@ function makeClient() {
 // ---------------------------------------------------------------------------
 // Data helpers
 // ---------------------------------------------------------------------------
-// Only real GO-device vehicles (skips manually-created test/placeholder assets)
+// Serial prefixes for GO devices that sit in a vehicle and report an odometer.
+// ALLOWLIST on purpose — Geotab keeps shipping non-vehicle SKUs (GO Anywhere,
+// E8/E9 puck tags, Oyster trackers) and a blocklist would need editing every
+// time a new one appears. Keep this in sync with the Add-In HTML.
+//   G8 -> GO8      G9 / GA -> GO9      X / X2 -> GO10
+const GO_VEHICLE_PREFIXES = ["G8", "G9", "GA", "X"];
+function hasGoVehicleSerial(sn) {
+  const s = String(sn || "").toUpperCase().trim();
+  return GO_VEHICLE_PREFIXES.some((p) => s.startsWith(p));
+}
+
+// Only real GO-device vehicles. Asset trackers report no odometer, so a
+// mileage-based oil reminder on one can never be meaningful.
 function isRealGoDevice(x) {
   const sn = (x.serialNumber || "").trim();
   const hasSerial = sn.length > 0 && !/^0+$/.test(sn) && sn.toUpperCase() !== "NOSERIALNUMBER";
+  if (!hasSerial) return false;
   const dt = (x.deviceType || "").toLowerCase();
-  const isCustom = dt.indexOf("custom") >= 0 || dt.indexOf("untracked") >= 0;
-  return hasSerial && !isCustom;
+  if (dt.indexOf("custom") >= 0 || dt.indexOf("untracked") >= 0) return false;
+  return hasGoVehicleSerial(sn);
 }
 
 async function getDevices(client, targetGroupId) {
@@ -139,9 +152,48 @@ async function getDevices(client, targetGroupId) {
     search: { groups: [{ id: targetGroupId }] },
   });
   const now = new Date();
-  return devices.filter(
-    (d) => (!d.activeTo || new Date(d.activeTo) > now) && isRealGoDevice(d)
+  const active = devices.filter((d) => !d.activeTo || new Date(d.activeTo) > now);
+  const tracked = active.filter(isRealGoDevice);
+  const skipped = active.filter((d) => !isRealGoDevice(d));
+  if (skipped.length) {
+    console.log(
+      `  Skipping ${skipped.length} non-vehicle asset(s): ` +
+        skipped.map((d) => `${d.name || d.id} [${d.serialNumber || "no serial"}]`).join(", ")
+    );
+  }
+  return tracked;
+}
+
+// AddInData records belonging to assets that are no longer tracked GO vehicles —
+// left over from before the serial filter existed. Logged every run; deleted
+// only when PURGE_ORPHAN_RECORDS=true is set on the job, so nothing disappears
+// without someone asking for it.
+function purgeRequested() {
+  return String(process.env.PURGE_ORPHAN_RECORDS || "").toLowerCase() === "true";
+}
+
+async function sweepOrphanOilRecords(client, state, trackedIds) {
+  const orphans = [];
+  for (const [deviceId, entry] of state.entries()) {
+    if (!trackedIds.has(deviceId)) orphans.push({ deviceId, entry });
+  }
+  if (!orphans.length) return;
+  const purge = purgeRequested();
+  console.log(
+    `  ${orphans.length} oil record(s) belong to assets that are no longer tracked` +
+      (purge ? " — deleting (PURGE_ORPHAN_RECORDS=true)" : " — set PURGE_ORPHAN_RECORDS=true to delete them")
   );
+  if (!purge) return;
+  for (const { deviceId, entry } of orphans) {
+    for (const id of [entry.id].concat(entry.dupeIds || [])) {
+      try {
+        await client.call("Remove", { typeName: "AddInData", entity: { id, addInId: ADD_IN_ID } });
+      } catch (e) {
+        console.log(`    could not remove ${id}: ${e.message}`);
+      }
+    }
+    state.delete(deviceId);
+  }
 }
 
 async function getOdometerMeters(client, deviceId) {
@@ -414,6 +466,8 @@ async function processAccount(account) {
     getDevices(client, account.targetGroupId),
     getState(client),
   ]);
+  const trackedIds = new Set(devices.map((d) => d.id));
+  await sweepOrphanOilRecords(client, state, trackedIds);
   console.log(`  Checking ${devices.length} vehicle(s)…`);
 
   const settingsRec = await getGlobalSettings(client);
@@ -573,6 +627,7 @@ async function processAccount(account) {
   // reset already happened, so leaving it set would just re-fire forever.
   const wantServicedEmail = alertEnabled(settings, "oilServiceDone");
   for (const [deviceId, entry] of state.entries()) {
+    if (!trackedIds.has(deviceId)) continue; // not a tracked GO vehicle
     const d = entry.details;
     if (!d || !d.emailPending) continue;
 
@@ -620,6 +675,7 @@ async function processAccount(account) {
     const cutoff = Date.now() - 30 * 86400000;
     const seen = new Set(serviced.map((v) => v.name));
     for (const [deviceId, entry] of state.entries()) {
+      if (!trackedIds.has(deviceId)) continue; // not a tracked GO vehicle
       const d = entry.details;
       const last = lastServiceFrom(d);
       if (!last.date || last.source !== "manual") continue;
@@ -675,7 +731,7 @@ async function processAccount(account) {
   let customReportRows = { status: {}, lines: [] };
   try {
     customReportRows = await processCustomReminders(
-      client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom, settings
+      client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom, settings, trackedIds
     );
   } catch (e) {
     console.error(`  Custom reminders error on ${label}: ${e.message}`);
@@ -794,7 +850,7 @@ async function sendCustomCompletedEmail(label, to, items) {
 // off in Settings) resets their baseline.
 // Returns { deviceId: { due:n, soon:n } } so the report can fold custom
 // reminders into each asset's status.
-async function processCustomReminders(client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom, settings) {
+async function processCustomReminders(client, account, label, odometerByDevice, globalDefaultEmail, autoResetCustom, settings, trackedIds) {
   const records = await client.call("Get", {
     typeName: "AddInData",
     search: { addInId: CUSTOM_ADD_IN_ID },
@@ -816,9 +872,18 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
   // "Mark done" confirmations queued by the Add-In, same grouping
   const completedByRecipient = {}; // recipientString -> [ {label, device, at} ]
 
+  // Reminders sitting on assets that aren't tracked GO vehicles (puck tags,
+  // GO Anywhere, retired units). Same treatment as the oil store: never acted
+  // on, logged every run, removed only when PURGE_ORPHAN_RECORDS=true.
+  const orphanCustom = [];
+
   for (const rec of records) {
     const d = typeof rec.details === "string" ? JSON.parse(rec.details) : rec.details;
     if (!d || d.settingsKey === "global" || !d.deviceId) continue;
+    if (trackedIds && !trackedIds.has(d.deviceId)) {
+      orphanCustom.push({ id: rec.id, name: d.deviceName || d.deviceId, label: d.label || "Reminder" });
+      continue;
+    }
 
     // ---- "Mark done" confirmation -------------------------------------
     // The Add-In sets emailPending when someone completes a reminder. That
@@ -956,6 +1021,23 @@ async function processCustomReminders(client, account, label, odometerByDevice, 
       }
       const entity = { id: rec.id, addInId: CUSTOM_ADD_IN_ID, groups: [{ id: "GroupCompanyId" }], details: d };
       await client.call("Set", { typeName: "AddInData", entity });
+    }
+  }
+
+  if (orphanCustom.length) {
+    const purge = purgeRequested();
+    console.log(
+      `  ${orphanCustom.length} custom reminder(s) on untracked assets` +
+        (purge ? " — deleting (PURGE_ORPHAN_RECORDS=true)" : " — set PURGE_ORPHAN_RECORDS=true to delete them")
+    );
+    if (purge) {
+      for (const o of orphanCustom) {
+        try {
+          await client.call("Remove", { typeName: "AddInData", entity: { id: o.id, addInId: CUSTOM_ADD_IN_ID } });
+        } catch (e) {
+          console.log(`    could not remove ${o.label} on ${o.name}: ${e.message}`);
+        }
+      }
     }
   }
 
