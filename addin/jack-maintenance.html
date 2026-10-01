@@ -280,23 +280,49 @@ geotab.addin.jackMaintenance = function () {
   function dot(c) { return '<span style="display:inline-block; width:11px; height:11px; border-radius:50%; background:'+c+'; flex:none;"></span>'; }
 
   // ---- data ----------------------------------------------------------
-  // Only real GO-device vehicles: active, with a valid hardware serial and a GO device type.
-  // Filters out manually-created test/placeholder assets and non-GO entries.
+  // Serial prefixes for GO devices that sit in a vehicle and report an odometer.
+  // This is an ALLOWLIST on purpose. Geotab keeps shipping non-vehicle SKUs
+  // (GO Anywhere, E8/E9 puck tags, Oyster trackers) and a blocklist would need
+  // editing every time a new one appears, which is how puck tags ended up with
+  // oil reminders. "X" covers both X and X2.
+  //   G8 -> GO8      G9 / GA -> GO9      X / X2 -> GO10
+  var GO_VEHICLE_PREFIXES = ["G8", "G9", "GA", "X"];
+  function hasGoVehicleSerial(sn) {
+    var s = String(sn || "").toUpperCase().trim();
+    for (var i = 0; i < GO_VEHICLE_PREFIXES.length; i++) {
+      if (s.indexOf(GO_VEHICLE_PREFIXES[i]) === 0) return true;
+    }
+    return false;
+  }
+
+  // Only real GO-device vehicles: active, valid hardware serial, and a serial
+  // prefix that says it's a vehicle-installed GO unit. Asset trackers have no
+  // odometer, so mileage-based maintenance tracking on them is meaningless.
   function isRealGoDevice(x) {
     var active = !x.activeTo || new Date(x.activeTo) > new Date();
     if (!active) return false;
     var sn = (x.serialNumber || "").trim();
     // Placeholder/custom assets have empty or all-zero serials
     var hasSerial = sn.length > 0 && !/^0+$/.test(sn) && sn.toUpperCase() !== "NOSERIALNUMBER";
+    if (!hasSerial) return false;
     // deviceType for real units is a GoX/GO variant; custom assets are CustomVehicleDevice/CustomDevice/Untracked
     var dt = (x.deviceType || "").toLowerCase();
-    var isCustom = dt.indexOf("custom") >= 0 || dt.indexOf("untracked") >= 0;
-    return hasSerial && !isCustom;
+    if (dt.indexOf("custom") >= 0 || dt.indexOf("untracked") >= 0) return false;
+    return hasGoVehicleSerial(sn);
   }
 
   function getDevices() {
     return apiCall("Get", { typeName: "Device" }).then(function (d) {
       var real = d.filter(isRealGoDevice);
+      // Log what was dropped. If a legitimate vehicle ever goes missing from
+      // the dashboard, its serial prefix shows up here and gets added above.
+      try {
+        var skipped = d.filter(function (x){ return !isRealGoDevice(x); });
+        if (skipped.length) {
+          console.log("[DynastyMaintain] Excluded " + skipped.length + " non-vehicle asset(s): " +
+            skipped.map(function (x){ return (x.name || x.id) + " [" + (x.serialNumber || "no serial") + "]"; }).join(" | "));
+        }
+      } catch (e) {}
       // capture group membership for filtering
       deviceGroups = {};
       real.forEach(function (dev) {
@@ -400,6 +426,18 @@ geotab.addin.jackMaintenance = function () {
       });
       return by;
     });
+  }
+  // A custom reminder whose asset is no longer a tracked GO vehicle (puck tag,
+  // GO Anywhere, retired unit) must not render or feed the report. The stored
+  // AddInData record is left alone — check-oil-reminders.js logs orphans so
+  // they can be purged deliberately rather than vanishing silently.
+  function dropUntrackedReminders(list, trackedDevices) {
+    var ok = {};
+    (trackedDevices || []).forEach(function (d){ ok[d.id] = true; });
+    var kept = (list || []).filter(function (r){ return r.details && ok[r.details.deviceId]; });
+    var dropped = (list || []).length - kept.length;
+    if (dropped) console.log("[DynastyMaintain] Hiding " + dropped + " reminder(s) on untracked assets");
+    return kept;
   }
   function getCustom() {
     return apiCall("Get", { typeName: "AddInData", search: { addInId: CUSTOM_ADD_IN_ID } }).then(function (recs) {
@@ -1059,14 +1097,19 @@ geotab.addin.jackMaintenance = function () {
   }
   function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g,"_"); }
 
+  // Below roughly a mile a day the least-squares fit is noise, and dividing by
+  // it produces absurd output ("due in ~80 months"). A visibly wrong number
+  // costs more credibility with a customer than no number, so we show nothing.
+  var MIN_RATE_FOR_PREDICTION = 1;   // miles/day
+  var MAX_PREDICTION_DAYS = 365;
+
   // Predict a due-date from remaining miles + this vehicle's daily mileage rate.
   // Returns e.g. "due in ~18 days · Aug 10", or "" if we can't reliably predict.
   function predictDueText(remainingMiles, rate) {
-    if (rate == null || rate <= 0 || remainingMiles == null) return "";
+    if (rate == null || rate < MIN_RATE_FOR_PREDICTION || remainingMiles == null) return "";
     if (remainingMiles <= 0) return ""; // already overdue — handled separately
     var days = Math.round(remainingMiles / rate);
-    if (!isFinite(days) || days <= 0) return "";
-    if (days > 365) return "due in ~" + Math.round(days/30) + " months"; // far out, keep it coarse
+    if (!isFinite(days) || days <= 0 || days > MAX_PREDICTION_DAYS) return "";
     var d = new Date(Date.now() + days*86400000);
     var dateStr = d.toLocaleDateString([], { month:"short", day:"numeric" });
     return "due in ~" + days + " day" + (days===1?"":"s") + " \u00b7 " + dateStr;
@@ -3232,7 +3275,7 @@ geotab.addin.jackMaintenance = function () {
       var devices = cache.allDevices; // load data for ALL devices; filter at render time
       return Promise.all([ safe(getOdometers(devices),{}), safe(getFaults(devices),{}), safe(getOilState(),{}), safe(getSensors(devices),{}), safe(getCustom(),[]), safe(getGlobalSettings(),{settingsKey:"global",defaultEmailTo:null}), safe(getFuelLevels(devices),{}) ]);
     }).then(function (res) {
-      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = res[4]; globalSettings = res[5] || globalSettings; reportDraft = null; // re-seed the report editor from what was just loaded
+      cache.odoMap = res[0]; cache.faultMap = res[1]; cache.oilMap = res[2]; cache.sensorMap = res[3]; cache.customList = dropUntrackedReminders(res[4], cache.allDevices); globalSettings = res[5] || globalSettings; reportDraft = null; // re-seed the report editor from what was just loaded
       var fuelMap = res[6] || {};
       // merge dedicated fuel readings into the sensor map so the detail panel uses them
       Object.keys(fuelMap).forEach(function (id){
