@@ -223,6 +223,7 @@ geotab.addin.jackMaintenance = function () {
     autoResetCustom:true,  // false => custom reminders stay due until marked done
     caution:"balanced",    // lean | balanced | safe — see CAUTION
     oilResetSendNow:false, // one-shot: email a summary of recent manual resets
+    alertsNormalized:false, // see migrateAlerts() — Setup no longer toggles alerts
     alerts:null,           // { alertId: bool }, defaults from ALERT_DEFS
     faultOverrides:[],     // [{ code, label, from, to, muted, note }]
     report:null
@@ -495,6 +496,21 @@ geotab.addin.jackMaintenance = function () {
     next.settingsKey = "global";
     return saveGlobalSettings(next).then(function () { globalSettings = next; return next; });
   }
+  // The Setup tab no longer exposes per-alert switches, so a stored alert map
+  // left in an odd state (everything off, say) could never be corrected from
+  // the UI and would silently stop every email the automation sends. Normalize
+  // to the ALERT_DEFS defaults once. The one switch that still exists — the
+  // confirmation toggle on the Oil tab — is carried over untouched.
+  function migrateAlerts() {
+    if (globalSettings.alertsNormalized) return Promise.resolve();
+    var next = defaultAlerts();
+    var curA = globalSettings.alerts || {};
+    if (curA.oilServiceDone !== undefined) next.oilServiceDone = curA.oilServiceDone;
+    return patchSettings({ alerts: next, alertsNormalized: true }).then(function () {
+      console.log("[DynastyMaintain] Alert flags reset to defaults (Setup no longer exposes them)");
+    }).catch(function (e) { console.warn("alert normalization skipped:", e && e.message); });
+  }
+
   function getOdometers(devices) {
     var now = new Date().toISOString();
     var calls = devices.map(function (d) {
@@ -1017,9 +1033,11 @@ geotab.addin.jackMaintenance = function () {
     scored.forEach(function (s){ counts[s.health.level]++; });
 
     var html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">' +
-      sumCard(counts.red,"Need service",C.red,"red") + sumCard(counts.amber,"Watch",C.amber,"amber") +
-      sumCard(counts.device,"Device issues",C.device,"device") +
-      sumCard(counts.green,"Healthy",C.green,"green") + sumCard(devices.length,"Total assets",C.soft,"all") + '</div>';
+      sumCard(counts.red,"Need service",C.red,"red",devices.length) +
+      sumCard(counts.amber,"Watch",C.amber,"amber",devices.length) +
+      sumCard(counts.device,"Device issues",C.device,"device",devices.length) +
+      sumCard(counts.green,"Healthy",C.green,"green",devices.length) +
+      sumCard(devices.length,"Total assets",C.brand,"all",devices.length) + '</div>';
 
     // Apply filter
     var visible = healthFilter ? scored.filter(function (s){ return s.health.level===healthFilter; }) : scored;
@@ -1071,16 +1089,38 @@ geotab.addin.jackMaintenance = function () {
     });
   }
 
-  function sumCard(num, label, fg, filterKey) {
-    var active = (filterKey==="all") ? (healthFilter===null) : (healthFilter && healthFilter===filterKey);
-    var clickable = filterKey!=null;
-    // Active state is a backlit ring in the metric's own colour rather than a
-    // heavy white outline — keeps the row calm while still reading as selected.
-    var border = "1px solid " + (active ? fg+"66" : C.line);
-    var shadow = active ? "inset 0 0 0 1px "+fg+"55, "+C.shadow : C.shadow;
-    return '<div '+(clickable?'data-filter="'+filterKey+'" ':'')+'style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:10px 13px; flex:1; min-width:120px; box-shadow:'+shadow+';'+(clickable?' cursor:pointer;':'')+'">' +
-      '<div style="font-size:24px; font-weight:700; letter-spacing:-0.025em; line-height:1.1; color:'+fg+';">'+num+'</div>' +
-      '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px;">'+label+(clickable?' \u203a':'')+'</div></div>';
+  // Status card in the Dynasty Safety style: the metric's own colour carries
+  // the card — accent rail across the top, tinted fill, share-of-fleet bar —
+  // instead of a dark panel with one coloured number sitting on it. A zero
+  // count is muted so an empty "Due now" doesn't read as an alarm.
+  function statCard(num, total, label, fg, attr, active, showPct) {
+    var zero = !num;
+    var col = zero ? C.faint : fg;
+    var pct = (total > 0) ? Math.round((num / total) * 100) : 0;
+    var bg = zero ? C.card
+      : 'linear-gradient(180deg, '+fg+'24 0%, '+fg+'0d 45%, '+C.card+' 100%)';
+    var border = zero ? C.line : fg+'4d';
+    var rail = zero ? C.line : fg;
+    var shadow = active
+      ? 'inset 0 0 0 1px '+fg+'80, 0 6px 18px -12px '+fg+'99, '+C.shadow
+      : C.shadow;
+    return '<div '+attr+' style="background:'+bg+'; border:1px solid '+border+'; border-top:3px solid '+rail+'; ' +
+        'border-radius:12px; padding:12px 14px 13px; flex:1; min-width:148px; box-shadow:'+shadow+'; cursor:pointer;">' +
+      '<div style="display:flex; align-items:baseline; gap:8px;">' +
+        '<span style="font-size:12.5px; font-weight:700; color:'+C.ink+'; flex:1; min-width:0;">'+label+'</span>' +
+        (showPct ? '<span style="font-size:13px; font-weight:700; color:'+col+'; font-variant-numeric:tabular-nums;">'+num+'</span>' : '') +
+      '</div>' +
+      '<div style="font-size:30px; font-weight:700; letter-spacing:-0.03em; line-height:1.15; margin-top:5px; color:'+col+';">' +
+        (showPct ? pct + '<span style="font-size:15px; font-weight:700;">%</span>' : num) + '</div>' +
+      '<div style="height:4px; border-radius:999px; background:'+C.track+'; margin-top:9px; overflow:hidden;">' +
+        '<div style="height:100%; width:'+(showPct?pct:100)+'%; border-radius:999px; background:'+(zero?C.line:fg)+';"></div>' +
+      '</div></div>';
+  }
+
+  function sumCard(num, label, fg, filterKey, total) {
+    var active = (filterKey==="all") ? (healthFilter===null) : (healthFilter===filterKey);
+    return statCard(num, total, label + ' \u203a', fg,
+      'data-filter="'+filterKey+'"', active, filterKey!=="all");
   }
   function sectionLabel(t, meta, right) {
     return '<div style="display:flex; align-items:baseline; gap:10px; margin:18px 2px 10px;">' +
@@ -1119,7 +1159,10 @@ geotab.addin.jackMaintenance = function () {
     var edge = h.level==="red"?C.red:h.level==="amber"?C.amber:h.level==="device"?C.device:C.green;
     // Backlight: a soft halo in the asset's status colour so health reads at a
     // glance against the black background.
-    var glow = "0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.9), inset 0 0 0 1px "+edge+"1f";
+    var glow = "0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.9), inset 0 0 0 1px "+edge+"3d";
+    // Wash the status colour across the left of the card so health reads from
+    // the body of the row, not just the 4px rail on its edge.
+    var tint = "linear-gradient(90deg, "+edge+"26 0%, "+edge+"0f 230px, "+C.card+" 520px)";
     var chips = "";
     if (h.faults && h.faults.items && h.faults.items.length) {
       var fs = faultSummary(h.faults); // distinct, live-only counts
@@ -1150,7 +1193,7 @@ geotab.addin.jackMaintenance = function () {
     var caret = isOpen ? "\u25be" : "\u25b8";
     var detail = isOpen ? detailPanel(device, h, sensors) : "";
 
-    return '<div id="asset-'+cssId(device.id)+'" style="background:'+C.card+'; border:1px solid '+C.line+'; border-left:4px solid '+edge+'; border-radius:10px; margin-bottom:10px; box-shadow:'+glow+'; overflow:hidden;">' +
+    return '<div id="asset-'+cssId(device.id)+'" style="background:'+tint+'; border:1px solid '+edge+'40; border-left:4px solid '+edge+'; border-radius:10px; margin-bottom:10px; box-shadow:'+glow+'; overflow:hidden;">' +
       '<div data-role="head" style="padding:11px 13px; cursor:pointer;">' +
         '<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">' +
           dot(edge) +
@@ -1445,10 +1488,10 @@ geotab.addin.jackMaintenance = function () {
 
     // Summary (clickable filters)
     var summary = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">' +
-      oilSumCard(counts.total,"Vehicles tracked",C.ink,"all") +
-      oilSumCard(counts.ok,"On track",C.green,"ok") +
-      oilSumCard(counts.soon,"Due soon",counts.soon?C.amber:C.ink,"soon") +
-      oilSumCard(counts.due,"Due now",counts.due?C.red:C.ink,"due") + '</div>';
+      oilSumCard(counts.total,"Vehicles tracked",C.brand,"all",counts.total) +
+      oilSumCard(counts.ok,"On track",C.green,"ok",counts.total) +
+      oilSumCard(counts.soon,"Due soon",C.amber,"soon",counts.total) +
+      oilSumCard(counts.due,"Due now",C.red,"due",counts.total) + '</div>';
 
     if (oilFilter && oilFilter!=="all") {
       var fname = oilFilter==="ok"?"On track":oilFilter==="soon"?"Due soon":"Due now";
@@ -1598,7 +1641,8 @@ geotab.addin.jackMaintenance = function () {
             ? '<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; background:'+C.amberBg+'; color:'+C.amber+'; margin-left:6px;">auto-triggered</span>'
             : '<span style="font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">manual</span>';
           var ol = (e.oilLife!=null) ? ' \u00b7 oil life was '+Math.round(e.oilLife)+'%' : '';
-          var label = isAuto ? "auto-reset (service not confirmed)" : "marked serviced";
+          var label = e.backfilled ? "logged after the fact"
+            : (isAuto ? "auto-reset (service not confirmed)" : "marked serviced");
           return '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12.5px; color:'+C.soft+'; padding:5px 0; border-top:1px solid '+C.line+';">' +
             '<span>'+dt+' \u00b7 '+label+ol+srcBadge+'</span>' +
             '<span style="display:flex; align-items:center; gap:9px;">' +
@@ -1624,8 +1668,23 @@ geotab.addin.jackMaintenance = function () {
         '</div>';
       }
 
+      // Backfill: record a service that actually happened at some earlier
+      // mileage. Needed when nobody marked it done and the automation
+      // auto-reset the counter at the interval instead of the real figure.
+      var bfRow =
+        '<div style="display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid '+C.line+';">' +
+          '<span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Log a past service</span>' +
+          '<input data-act="bf-odo" type="number" min="1" step="1" placeholder="odometer at service" style="width:160px; padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; color-scheme:dark;">' +
+          '<span style="font-size:12.5px; color:'+C.soft+';">'+UNITS+'</span>' +
+          '<input data-act="bf-date" type="date" style="padding:6px 9px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+'; color-scheme:dark;">' +
+          '<button data-act="bf-add" style="border:1px solid '+C.brand+'8c; background:'+C.brandSoft+'; color:'+C.brand+'; border-radius:8px; padding:6px 13px; font-size:12.5px; font-weight:650; cursor:pointer;">Add to history</button>' +
+          '<div style="flex-basis:100%; font-size:11px; color:'+C.faint+'; line-height:1.5;">Use this when the oil was changed but never marked done. The counter restarts from the mileage you enter, so the next change comes due an interval after that \u2014 not after the auto-reset figure.</div>' +
+        '</div>';
+
       var card = document.createElement("div");
-      card.style.cssText = "background:"+C.card+"; border:1px solid "+C.line+"; border-radius:12px; padding:12px 14px; margin-bottom:8px; box-shadow:"+C.shadow+";";
+      card.style.cssText = "background:linear-gradient(90deg,"+fill+"24 0%,"+fill+"0d 230px,"+C.card+" 520px); " +
+        "border:1px solid "+fill+"40; border-left:4px solid "+fill+"; border-radius:12px; padding:12px 14px; " +
+        "margin-bottom:8px; box-shadow:inset 0 0 0 1px "+fill+"1f, "+C.shadow+";";
       var isCardOpen = !!expandedOil[device.id];
       card.innerHTML =
         '<div data-oiltoggle="'+esc(device.id)+'" style="display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none;">' +
@@ -1652,6 +1711,7 @@ geotab.addin.jackMaintenance = function () {
             '<button data-act="reset" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:7px 13px; font-size:13px; font-weight:600; cursor:pointer;">Mark serviced now</button>' +
             '<button data-act="save" style="border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 13px; font-size:13px; font-weight:600; cursor:pointer;">Save</button>' +
           '</div>' +
+          bfRow +
           histHtml +
         '</div>';
       var intervalInput = card.querySelector('input[type="number"]');
@@ -1668,6 +1728,32 @@ geotab.addin.jackMaintenance = function () {
         var ol = (sensors && sensors.oilLife != null) ? sensors.oilLife : null;
         det.history.push({ date: new Date().toISOString(), odoMeters: odoMeters, source: "manual", oilLife: ol });
         persistOil(rec, det, device, oilMap).then(function () { toast(device.name+" marked serviced — confirmation queued"); reloadAll(); });
+      });
+      var bfAdd = card.querySelector('[data-act="bf-add"]');
+      if (bfAdd) bfAdd.addEventListener("click", function () {
+        var miles = Number((card.querySelector('[data-act="bf-odo"]')||{}).value);
+        if (!isFinite(miles) || miles <= 0) { toast("Enter the odometer reading at the time of service"); return; }
+        var nowUnits = odoMeters / METERS_PER_UNIT;
+        if (miles > nowUnits + 1) { toast("That is past the current odometer ("+fmt(nowUnits)+" "+UNITS+")"); return; }
+        var raw = (card.querySelector('[data-act="bf-date"]')||{}).value;
+        // noon local so the date can't slide a day either way on the UTC round-trip
+        var when = raw ? new Date(raw + "T12:00:00") : new Date();
+        if (isNaN(when.getTime())) { toast("Enter a valid date"); return; }
+        if (when.getTime() > Date.now() + 86400000) { toast("That date is in the future"); return; }
+        var meters = miles * METERS_PER_UNIT;
+        var iv = det.intervalMiles || DEFAULT_INTERVAL_MILES;
+        if (!window.confirm("Record an oil change for "+device.name+" at "+fmt(miles)+" "+UNITS+" on "+when.toLocaleDateString()+"?\n\nThe counter restarts from there, so the next one comes due at "+fmt(miles+iv)+" "+UNITS+".")) return;
+        if (!det.history) det.history = [];
+        det.history.push({ date: when.toISOString(), odoMeters: meters, source: "manual", backfilled: true });
+        det.lastNotifiedMeters = meters;
+        det.lastNotifiedDate = when.toISOString();
+        det.deviceName = device.name;
+        // Deliberately no emailPending — this corrects the log, it isn't a fresh
+        // completion, so it must not fire a "marked serviced" confirmation.
+        persistOil(rec, det, device, oilMap).then(function () {
+          toast("Logged service at "+fmt(miles)+" "+UNITS+" \u00b7 "+device.name);
+          reloadAll();
+        }).catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
       });
       card.querySelector('[data-act="email"]').addEventListener("click", function () {
         var current = det.emailTo || "";
@@ -1838,13 +1924,9 @@ geotab.addin.jackMaintenance = function () {
       });
     });
   }
-  function oilSumCard(num, label, fg, filterKey) {
-    var active = oilFilter===filterKey;
-    var border = "1px solid " + (active ? fg+"66" : C.line);
-    var shadow = active ? "inset 0 0 0 1px "+fg+"55, "+C.shadow : C.shadow;
-    return '<div data-oilfilter="'+filterKey+'" style="background:'+C.card+'; border:'+border+'; border-radius:10px; padding:10px 13px; flex:1; min-width:120px; box-shadow:'+shadow+'; cursor:pointer;">' +
-      '<div style="font-size:24px; font-weight:700; letter-spacing:-0.025em; line-height:1.1; color:'+fg+';">'+num+'</div>' +
-      '<div style="font-size:11.5px; color:'+C.soft+'; margin-top:2px;">'+label+' \u203a</div></div>';
+  function oilSumCard(num, label, fg, filterKey, total) {
+    return statCard(num, total, label + ' \u203a', fg,
+      'data-oilfilter="'+filterKey+'"', oilFilter===filterKey, filterKey!=="all");
   }
   function persistOil(rec, det, device, oilMap) {
     var entity = { addInId:ADD_IN_ID, groups:[{id:"GroupCompanyId"}], details:det };
@@ -1964,7 +2046,9 @@ geotab.addin.jackMaintenance = function () {
             var val = d.type==="days" ? (e.date?new Date(e.date).toLocaleDateString():"") : (e.odoMeters!=null?fmt(e.odoMeters/METERS_PER_UNIT)+" "+UNITS:"—");
             var dt = e.date ? new Date(e.date).toLocaleDateString() : "";
             var isAuto = e.source==="auto";
-            var badge = isAuto
+            var badge = e.backfilled
+              ? '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.purpleBg+'; color:'+C.purple+'; margin-left:6px;">logged</span>'
+              : isAuto
               ? '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.amberBg+'; color:'+C.amber+'; margin-left:6px;">auto</span>'
               : '<span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:999px; background:'+C.greenBg+'; color:'+C.green+'; margin-left:6px;">done</span>';
             return '<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:12px; color:'+C.soft+'; padding:3px 0;">' +
@@ -1977,6 +2061,19 @@ geotab.addin.jackMaintenance = function () {
           '<div style="font-size:10.5px; color:'+C.faint+'; margin-top:6px;">Deleting entries only edits the log \u2014 the reminder\u2019s counter is unchanged.</div>' +
           '</div>';
       }
+      // Backfill, same idea as the Oil tab: record a completion that actually
+      // happened earlier. Distance reminders need the odometer reading; time
+      // reminders only need the date.
+      var crBf =
+        '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid '+C.line+';">' +
+          '<span style="font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:'+C.soft+';">Log a past completion</span>' +
+          (d.type === "days" ? '' :
+            '<input data-crbf="odo" type="number" min="1" step="1" placeholder="odometer at service" style="width:150px; padding:5px 8px; border:1px solid '+C.line+'; border-radius:7px; font-size:12.5px; background:'+(insideBatch?C.card:C.card2)+'; color:'+C.ink+'; color-scheme:dark;">' +
+            '<span style="font-size:12px; color:'+C.soft+';">'+UNITS+'</span>') +
+          '<input data-crbf="date" type="date" style="padding:5px 8px; border:1px solid '+C.line+'; border-radius:7px; font-size:12.5px; background:'+(insideBatch?C.card:C.card2)+'; color:'+C.ink+'; color-scheme:dark;">' +
+          '<button data-crbf="add" style="border:1px solid '+C.brand+'8c; background:'+C.brandSoft+'; color:'+C.brand+'; border-radius:7px; padding:5px 11px; font-size:12px; font-weight:650; cursor:pointer;">Add</button>' +
+        '</div>';
+
       var margin = insideBatch ? "margin:8px 0 0;" : "margin-bottom:8px;";
       var titleLine;
       if (insideBatch) {
@@ -1991,7 +2088,8 @@ geotab.addin.jackMaintenance = function () {
           '<div style="font-size:12px; color:'+C.soft+'; margin-top:2px;">'+esc(d.deviceName||nameById[d.deviceId]||"")+' \u00b7 every '+fmt(d.interval)+' '+unit+'</div></div>';
       }
 
-      return '<div data-crid="'+esc(rec.id)+'" style="background:'+(insideBatch?C.card2:C.card)+'; border:1px solid '+C.line+'; border-radius:12px; padding:11px 13px; '+margin+' '+(insideBatch?'':'box-shadow:'+C.shadow+';')+'">' +
+      var crTint = 'linear-gradient(90deg,'+fill+'24 0%,'+fill+'0d 210px,'+(insideBatch?C.card2:C.card)+' 460px)';
+      return '<div data-crid="'+esc(rec.id)+'" style="background:'+crTint+'; border:1px solid '+fill+'40; border-left:4px solid '+fill+'; border-radius:12px; padding:11px 13px; '+margin+' '+(insideBatch?'':'box-shadow:'+C.shadow+';')+'">' +
         '<div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:12px;">' +
           titleLine + pillHtml +
         '</div>' +
@@ -2003,6 +2101,7 @@ geotab.addin.jackMaintenance = function () {
           '<button data-cr="complete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.brand+'; border-radius:8px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer;">Mark done</button>' +
           '<button data-cr="delete" style="border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:8px; padding:6px 12px; font-size:13px; font-weight:600; cursor:pointer;">Delete</button>' +
         '</div>' +
+        crBf +
         histHtml +
       '</div>';
     }
@@ -2260,6 +2359,35 @@ geotab.addin.jackMaintenance = function () {
       });
       if (deleteBtn) deleteBtn.addEventListener("click", function () {
         deleteCustom(rec).then(function () { toast("Reminder deleted"); reloadAll(); });
+      });
+      var crBfAdd = cardEl.querySelector('[data-crbf="add"]');
+      if (crBfAdd) crBfAdd.addEventListener("click", function () {
+        var d = rec.details;
+        var raw = (cardEl.querySelector('[data-crbf="date"]')||{}).value;
+        var when = raw ? new Date(raw + "T12:00:00") : new Date();
+        if (isNaN(when.getTime())) { toast("Enter a valid date"); return; }
+        if (when.getTime() > Date.now() + 86400000) { toast("That date is in the future"); return; }
+        var meters = null;
+        if (d.type !== "days") {
+          var miles = Number((cardEl.querySelector('[data-crbf="odo"]')||{}).value);
+          if (!isFinite(miles) || miles <= 0) { toast("Enter the odometer reading at the time of service"); return; }
+          var curOdo = odoByDevice[d.deviceId];
+          if (curOdo != null && miles > curOdo/METERS_PER_UNIT + 1) {
+            toast("That is past the current odometer ("+fmt(curOdo/METERS_PER_UNIT)+" "+UNITS+")"); return;
+          }
+          meters = miles * METERS_PER_UNIT;
+        }
+        var atTxt = meters != null ? " at "+fmt(meters/METERS_PER_UNIT)+" "+UNITS : "";
+        if (!window.confirm('Record "'+(d.label||"this reminder")+'" as completed on '+when.toLocaleDateString()+atTxt+"?\n\nThe counter restarts from that point.")) return;
+        if (!d.history) d.history = [];
+        d.history.push({ date: when.toISOString(), odoMeters: meters, source: "manual", backfilled: true });
+        if (d.type !== "days" && meters != null) d.baselineMeters = meters;
+        d.baselineDate = when.toISOString();
+        d.deviceName = d.deviceName || nameById[d.deviceId] || "";
+        // No emailPending — a backfill is a log correction, not a completion,
+        // so it must not queue a "marked done" confirmation email.
+        persistCustom(rec).then(function () { toast("Logged past completion"); reloadAll(); })
+          .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
       });
       var emailBtn = cardEl.querySelector('[data-cr="edit-email"]');
       if (emailBtn) emailBtn.addEventListener("click", function () {
@@ -2910,91 +3038,6 @@ geotab.addin.jackMaintenance = function () {
     var cur = globalSettings.caution || "balanced";
     var cfg = CAUTION[cur] || CAUTION.balanced;
 
-    // ---- column 1: caution profile ----
-    var cautionRows = CAUTION_ORDER.map(function (key) {
-      var c = CAUTION[key], on = key === cur;
-      return '<div data-caution="'+key+'" style="display:flex; gap:10px; align-items:flex-start; padding:10px 11px; margin-bottom:8px; cursor:pointer; ' +
-        'border:1px solid '+(on?C.brand+"8c":C.line)+'; border-radius:10px; background:'+(on?C.brandSoft:C.card2)+';">' +
-        '<span style="flex:none; margin-top:1px; width:15px; height:15px; border-radius:50%; border:2px solid '+(on?C.brand:C.faint)+'; ' +
-          'display:inline-flex; align-items:center; justify-content:center;">' +
-          (on?'<span style="width:7px; height:7px; border-radius:50%; background:'+C.brand+';"></span>':'') + '</span>' +
-        '<span><span style="font-size:13px; font-weight:650; color:'+(on?C.ink:C.soft)+';">'+c.label+'</span>' +
-        '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:2px; line-height:1.45;">'+c.blurb+'</div></span></div>';
-    }).join("");
-    var num = function (v){ return '<b style="color:'+C.brand+';">'+v+'</b>'; };
-    var cautionPanel = cautionRows +
-      '<div style="font-size:11.5px; color:'+C.faint+'; line-height:1.6; margin-top:4px;">In numbers: score shift ' +
-      num(cfg.scoreShift > 0 ? "+"+cfg.scoreShift : cfg.scoreShift) + ', due now at ' + num(cfg.dueNowPct+"%") +
-      ' of the interval left, due soon at ' + num(cfg.dueSoonPct+"%") + ', date rules ' + num(cfg.dateDays+" days") + ' out.</div>';
-
-    // ---- column 2: alerts ----
-    var alertRows = ALERT_DEFS.map(function (d, i) {
-      var on = alertOn(d.id);
-      return '<div style="display:flex; align-items:center; gap:12px; padding:11px 0;'+(i?' border-top:1px solid '+C.line+';':'')+'">' +
-        '<span style="flex:1; min-width:0;"><span style="font-size:12.5px; font-weight:600; color:'+(on?C.ink:C.soft)+';">'+d.title+'</span>' +
-        '<div style="font-size:11px; color:'+C.faint+'; margin-top:2px;">'+d.note+'</div></span>' +
-        switchEl("alert:"+d.id, on) + '</div>';
-    }).join("");
-    var alertsPanel =
-      '<div style="font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:'+C.soft+'; margin-bottom:6px;">Who gets them</div>' +
-      '<input id="st-alert-to" type="text" value="'+esc(globalSettings.defaultEmailTo || "")+'" placeholder="shop@dynastync.com" ' +
-        'style="width:100%; padding:8px 10px; border:1px solid '+C.line+'; border-radius:8px; font-size:13px; background:'+C.card2+'; color:'+C.ink+';">' +
-      '<div style="font-size:11.5px; color:'+C.faint+'; margin-top:6px; line-height:1.5;">Separate several with commas. If nothing needs attention no email goes out. Individual reminders can still override this.</div>' +
-      '<div style="margin-top:6px;">'+alertRows+'</div>';
-
-    // ---- column 3: fault overrides ----
-    var sevChip = function (sev, muted) {
-      var meta = RISK_META[sev] || RISK_META.medium;
-      var col = meta.color==="red" ? C.red : meta.color==="amber" ? C.amber : C.faint;
-      var bg  = meta.color==="red" ? C.redBg : meta.color==="amber" ? C.amberBg : C.track;
-      if (muted) { col = C.faint; bg = C.track; }
-      return '<span style="display:inline-block; font-size:9.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; ' +
-        'padding:2px 8px; border-radius:999px; background:'+bg+'; color:'+col+'; border:1px solid '+col+'55; white-space:nowrap;">'+
-        (muted?"Muted in alerts":meta.label)+'</span>';
-    };
-    var ovs = globalSettings.faultOverrides || [];
-    var th2 = 'padding:6px 8px; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:'+C.faint+'; text-align:left;';
-    var ovRows = ovs.map(function (o, i) {
-      return '<tr>' +
-        '<td style="padding:9px 8px; border-top:1px solid '+C.line+'; vertical-align:top;">' +
-          '<div style="font-size:12px; font-weight:650; color:'+C.ink+'; line-height:1.35;">'+esc(o.label || o.code)+'</div>' +
-          (o.label && o.code ? '<div style="font-size:10.5px; color:'+C.faint+'; margin-top:2px;">'+esc(o.code)+'</div>' : '') +
-        '</td>' +
-        '<td style="padding:9px 8px; border-top:1px solid '+C.line+'; vertical-align:top;">' +
-          sevChip(o.from) + ' <span style="color:'+C.faint+';">&rarr;</span> ' + sevChip(o.to, o.muted) +
-        '</td>' +
-        '<td style="padding:9px 8px; border-top:1px solid '+C.line+'; vertical-align:top; font-size:11.5px; color:'+C.soft+'; line-height:1.45;">' +
-          esc(o.note || "") +
-          '<div><button data-ovdel="'+i+'" style="margin-top:6px; border:1px solid '+C.line+'; background:transparent; color:'+C.red+'; border-radius:6px; padding:2px 9px; font-size:10.5px; font-weight:650; cursor:pointer;">Remove</button></div>' +
-        '</td></tr>';
-    }).join("");
-    var sevOpts = function (sel) {
-      return SEVERITIES.map(function (v) {
-        return '<option value="'+v+'"'+(v===sel?" selected":"")+'>'+(RISK_META[v]?RISK_META[v].label:v)+'</option>';
-      }).join("");
-    };
-    var ovPanel =
-      '<div style="overflow:auto;"><table style="width:100%; border-collapse:collapse;"><thead><tr>' +
-        '<th style="'+th2+'">Code</th><th style="'+th2+'">Severity</th><th style="'+th2+'">Why</th>' +
-      '</tr></thead><tbody>' +
-      (ovRows || '<tr><td colspan="3" style="padding:14px 8px; border-top:1px solid '+C.line+'; color:'+C.faint+'; font-size:12px;">No overrides. Faults use their Geotab severity, or the built-in rating when Geotab doesn\u2019t supply one.</td></tr>') +
-      '</tbody></table></div>' +
-      '<div style="margin-top:12px; padding-top:11px; border-top:1px solid '+C.line+';">' +
-        '<div style="font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.07em; color:'+C.soft+'; margin-bottom:7px;">Add an override</div>' +
-        '<div style="display:grid; grid-template-columns:1fr 1fr; gap:7px;">' +
-          '<input id="ov-code" type="text" placeholder="Code or name match, e.g. SPN 3251" style="'+inputCss+' width:100%;">' +
-          '<input id="ov-label" type="text" placeholder="Label (optional)" style="'+inputCss+' width:100%;">' +
-          '<select id="ov-from" style="'+inputCss+' width:100%;">'+sevOpts("medium")+'</select>' +
-          '<select id="ov-to" style="'+inputCss+' width:100%;">'+sevOpts("high")+'</select>' +
-        '</div>' +
-        '<input id="ov-note" type="text" placeholder="Why \u2014 the reason this override exists" style="'+inputCss+' width:100%; margin-top:7px;">' +
-        '<label style="display:flex; align-items:center; gap:8px; margin-top:8px; cursor:pointer;">' +
-          '<input type="checkbox" id="ov-muted" style="width:15px;height:15px;">' +
-          '<span style="font-size:12px; color:'+C.soft+';">Mute in alerts (still shown on the vehicle)</span></label>' +
-        '<button id="ov-add" style="margin-top:9px; border:none; background:'+C.brand+'; color:'+C.onBrand+'; border-radius:8px; padding:7px 14px; font-size:12.5px; font-weight:650; cursor:pointer;">Add override</button>' +
-      '</div>';
-
-    // ---- reset behaviour + config summary (existing) ----
     var anyManual = !autoOil || !autoCustom;
     var banner = anyManual
       ? '<div style="background:'+C.purpleBg+'; border:1px solid '+C.purple+'55; border-radius:10px; padding:10px 13px; margin-bottom:12px;">' +
@@ -3022,7 +3065,6 @@ geotab.addin.jackMaintenance = function () {
       kv("Oil reminders", autoOil ? "Automatic" : "Manual confirmation") +
       kv("Service reminders", autoCustom ? "Automatic" : "Manual confirmation") +
       kv("Alerts enabled", onCount + " of " + ALERT_DEFS.length) +
-      kv("Fault overrides", ovs.length) +
       kv("Scheduled report", rp && rp.enabled
         ? (rp.frequency === "weekly" ? "Weekly" : "Daily") + " at " + esc(rp.time || "07:00")
         : "Off") +
@@ -3030,71 +3072,12 @@ geotab.addin.jackMaintenance = function () {
 
     settingsEl.innerHTML =
       banner +
-      '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(310px, 1fr)); gap:11px; align-items:start; margin-bottom:11px;">' +
-        colPanel("How cautious should we be?", null, cautionPanel) +
-        colPanel("Alerts", null, alertsPanel) +
-        colPanel("Fault overrides", "Per code, fleet-wide", ovPanel) +
-      '</div>' +
       panel("Automatic reminder handling",
         "Controls whether the automation script may reset a reminder on its own when it comes due. Changes save immediately and apply on the next run.",
         resetPanel) +
       panel("Current configuration", null, statusPanel);
 
     // ---- wiring ----
-    settingsEl.querySelectorAll("[data-caution]").forEach(function (el) {
-      el.addEventListener("click", function () {
-        var key = el.getAttribute("data-caution");
-        if (key === globalSettings.caution) return;
-        patchSettings({ caution: key })
-          .then(function () { toast("Caution profile: "+CAUTION[key].label); reloadAll(); })
-          .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
-      });
-    });
-
-    settingsEl.querySelectorAll("[data-switch]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var id = btn.getAttribute("data-switch").replace(/^alert:/, "");
-        var next = {};
-        var curA = globalSettings.alerts || defaultAlerts();
-        Object.keys(curA).forEach(function (k){ next[k] = curA[k]; });
-        next[id] = !alertOn(id);
-        patchSettings({ alerts: next })
-          .then(function () { renderSettings(devices); })
-          .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
-      });
-    });
-
-    var alertTo = $("st-alert-to");
-    if (alertTo) alertTo.addEventListener("change", function () {
-      patchSettings({ defaultEmailTo: alertTo.value.trim() || null })
-        .then(function () { toast("Alert recipients saved"); });
-    });
-
-    var ovAdd = $("ov-add");
-    if (ovAdd) ovAdd.addEventListener("click", function () {
-      var code = ($("ov-code")||{}).value || "";
-      if (!code.trim()) { toast("Enter a fault code or name to match"); return; }
-      var next = (globalSettings.faultOverrides || []).slice();
-      next.push({
-        code: code.trim(),
-        label: (($("ov-label")||{}).value || "").trim(),
-        from: ($("ov-from")||{}).value || "medium",
-        to: ($("ov-to")||{}).value || "high",
-        muted: !!(($("ov-muted")||{}).checked),
-        note: (($("ov-note")||{}).value || "").trim()
-      });
-      patchSettings({ faultOverrides: next })
-        .then(function () { toast("Override added"); reloadAll(); })
-        .catch(function (e){ toast("Save failed: "+(e&&e.message?e.message:e)); });
-    });
-    settingsEl.querySelectorAll("[data-ovdel]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        var i = Number(btn.getAttribute("data-ovdel"));
-        var next = (globalSettings.faultOverrides || []).slice();
-        next.splice(i, 1);
-        patchSettings({ faultOverrides: next }).then(function () { toast("Override removed"); reloadAll(); });
-      });
-    });
 
     var oilCb = $("st-oil");
     if (oilCb) oilCb.addEventListener("change", function () {
@@ -3282,7 +3265,9 @@ geotab.addin.jackMaintenance = function () {
         if (!cache.sensorMap[id]) cache.sensorMap[id] = {};
         cache.sensorMap[id].fuel = fuelMap[id];
       });
-      return safe(resolveDiagnostics(cache.faultMap), undefined).then(function () {
+      return safe(migrateAlerts(), undefined).then(function () {
+        return safe(resolveDiagnostics(cache.faultMap), undefined);
+      }).then(function () {
         // predictive mileage rates need the current odometer map
         return safe(getMileageRates(cache.allDevices, cache.odoMap), {});
       }).then(function (rates) {
